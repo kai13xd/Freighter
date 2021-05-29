@@ -1,0 +1,91 @@
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+*default*        0x0000000000000000 0xffffffffffffffff
+
+Linker script and memory map
+
+                0x00000000803ec840                . = 0x803ec840
+
+.text           0x00000000803ec840      0x27c
+ *(.text)
+ .text          0x00000000803ec840       0x20 ../source/test.s.o
+                0x00000000803ec840                newfunc
+ .text          0x00000000803ec860      0x25c ../source/system.cpp.s.o
+                0x00000000803ec860                openFile__6SystemFPcbb
+
+.init           0x00000000803ecabc        0x0
+ .init          0x00000000803ecabc        0x0 ../source/system.cpp.s.o
+
+.glink          0x00000000803ecabc        0x0
+ .glink         0x00000000803ecabc        0x0 ../source/system.cpp.s.o
+
+.rodata         0x00000000803ecabc        0x0
+ *(.rodata*)
+ .rodata        0x00000000803ecabc        0x0 ../source/system.cpp.s.o
+
+.sdata2         0x00000000803ecabc       0x18
+ .sdata2        0x00000000803ecabc       0x18 ../source/system.cpp.s.o
+                0x00000000803f4abc                _SDA2_BASE_
+ .sdata2        0x00000000803ecad4        0x0 ../source/system.cpp.s.o
+
+.sbss2          0x00000000803ecad4        0x0
+ .sbss2         0x00000000803ecad4        0x0 ../source/system.cpp.s.o
+
+.eh_frame       0x00000000803ecad4        0x0
+ .eh_frame      0x00000000803ecad4        0x0 ../source/system.cpp.s.o
+
+.rela.dyn       0x00000000803ecad4        0x0
+ .rela.iplt     0x00000000803ecad4        0x0 ../source/system.cpp.s.o
+
+.data           0x00000000803ecad4        0x0
+ *(.data)
+ .data          0x00000000803ecad4        0x0 ../source/test.s.o
+ .data          0x00000000803ecad4        0x0 ../source/system.cpp.s.o
+
+.branch_lt      0x00000000803ecad4        0x0
+ .branch_lt     0x00000000803ecad4        0x0 ../source/system.cpp.s.o
+                0x00000000803ecadc                . = (. + 0x8)
+
+.sdata          0x00000000803ecadc        0x0
+ *(.sdata)
+ .sdata         0x00000000803ecadc        0x0 ../source/system.cpp.s.o
+ .sdata         0x00000000803ecadc        0x0 ../source/system.cpp.s.o
+                0x000000008004c350                DGXGraphics__texturePrintf = 0x8004c350
+                0x000000008004a12c                DGXGraphics__setColour = 0x8004a12c
+                0x00000000801f7890                OSReport = 0x801f7890
+                0x0000000080216598                sprintf = 0x80216598
+                0x0000000080040680                getChildCount__8CoreNodeFv = 0x80040680
+                0x00000000802191c4                strcmp = 0x802191c4
+                0x0000000080047004                alloc__6SystemFUl = 0x80047004
+                0x0000000080025598                __ct__19BufferedInputStreamFP6StreamPUci = 0x80025598
+                0x00000000801ff30c                DVDOpen = 0x801ff30c
+                0x00000000801ff3d4                DVDClose = 0x801ff3d4
+                0x0000000080025500                init__19BufferedInputStreamFP6StreamPUci = 0x80025500
+                0x00000000801fefb8                DVDConvertPathToEntrynum = 0x801fefb8
+LOAD ../source/test.s.o
+LOAD ../source/system.cpp.s.o
+OUTPUT(project.o elf32-powerpc)
+
+.bss            0x00000000803ecadc        0x0
+ .bss           0x00000000803ecadc        0x0 ../source/test.s.o
+ .bss           0x00000000803ecadc        0x0 ../source/system.cpp.s.o
+
+.sbss           0x00000000803ecadc        0x0
+ .sbss          0x00000000803ecadc        0x0 ../source/system.cpp.s.o
+
+.iplt           0x00000000803ecae0        0x0
+ .iplt          0x00000000803ecae0        0x0 ../source/system.cpp.s.o
+
+extab           0x0000000000000000        0x0
+ extab          0x0000000000000000        0x0 ../source/system.cpp.s.o
+
+extabindex      0x0000000000000000        0x0
+ extabindex     0x0000000000000000        0x0 ../source/system.cpp.s.o
+
+.ctors          0x0000000000000000        0x0
+ .ctors         0x0000000000000000        0x0 ../source/system.cpp.s.o
+
+.dtors          0x0000000000000000        0x0
+ .dtors         0x0000000000000000        0x0 ../source/system.cpp.s.o

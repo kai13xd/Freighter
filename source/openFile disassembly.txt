@@ -1,0 +1,186 @@
+.include "../source/defines.inc"
+.section .text
+
+.global OpenFile__6SystemFPcbb
+OpenFile__6SystemFPcbb:
+# System::OpenFile(char* iArg1, bool iArg2, bool iArg3)
+118$:###Prologue###
+	stw          r0, 0x0004 (sp)
+	stwu         sp, -0x0138 (sp)
+	stmw         r27, 0x0124 (sp)
+
+	mr.          r27, r5, 0
+	mr           r29, r3, 0
+	mr           r30, r4, 0
+	lis          r31,      __loc__10system_cpp588@ha
+	subi         r31, r31, __loc__10system_cpp588@l
+
+
+
+	mflr         r0
+	stw          r0, 0x0004 (sp)
+	stwu         sp, -0x0138 (sp)
+	stmw         r27, 0x0124 (sp)
+	
+	mr.          r27, iArg3
+	mr           r29, iArg1
+	mr           r30, iArg2
+	lis          r31,      __loc__10system_cpp588@h
+	ori          r31, r31, __loc__10system_cpp588@l
+	beq-         101$
+	lwz          r5, 0x004C (r29)
+	b            102$
+101$:          
+	subi         r5, r13, 30784
+102$:          
+	crclr        6
+	addi         r3, sp, 28
+	subi         r4, r13, 30780
+	bl           sprintf
+	rlwinm.      r0, r27, 0, 24, 31
+	beq-         103$
+	lwz          r6, 0x0050 (r29)
+	b            104$
+103$:          
+	subi         r6, r13, 30784
+104$:          
+	addi         r3, sp, 28
+	crclr        6
+	addi         r5, r3, 0
+	addi         r7, r30, 0
+	subi         r4, r13, 30776
+	bl           sprintf
+	rlwinm.      r0, r27, 0, 24, 31
+	beq-         114$
+	addi         r3, r29, 512
+	bl           getChildCount__8CoreNodeFv
+	cmpwi        r3, 0
+	bne-         105$
+	addi         r3, r29, 532
+	bl           getChildCount__8CoreNodeFv
+	cmpwi        r3, 0
+	beq-         114$
+105$:          
+	lwz          r27, 0x0210 (r29)
+	b            109$
+106$:          
+	lwz          r3, 0x0004 (r27)
+	mr           r4, r30
+	bl           strcmp
+	cmpwi        r3, 0
+	bne-         108$
+	lwz          r5, 0x0014 (r27)
+	li           r0, 0
+	lwz          r4, 0x0018 (r27)
+	li           r3, 32
+	stw          r30, 0x03A0 (r31)
+	stw          r5, 0x03B0 (r31)
+	stw          r4, 0x03A8 (r31)
+	stw          r0, 0x03AC (r31)
+	bl           alloc__6SystemFUl
+	addi         r29, r3, 0
+	mr.          r3, r29
+	beq-         107$
+	lwz          r5, 0x2E04 (r13)
+	addi         r4, r31, 928
+	lwz          r6, 0x0504 (r31)
+	bl           __ct__19BufferedInputStreamFP6StreamPUci
+107$:          
+	mr           r3, r29
+	b            117$
+108$:          
+	lwz          r27, 0x000C (r27)
+109$:          
+	cmplwi       r27, 0
+	bne+         106$
+	lwz          r27, 0x0224 (r29)
+	b            113$
+110$:         
+	lwz          r3, 0x0004 (r27)
+	mr           r4, r30
+	bl           strcmp
+	cmpwi        r3, 0
+	bne-         112$
+	lwz          r5, 0x0014 (r27)
+	li           r0, 0
+	lwz          r4, 0x0018 (r27)
+	li           r3, 32
+	stw          r30, 0x03A0 (r31)
+	stw          r5, 0x03B0 (r31)
+	stw          r4, 0x03A8 (r31)
+	stw          r0, 0x03AC (r31)
+	bl           alloc__6SystemFUl
+	addi         r29, r3, 0
+	mr.          r3, r29
+	beq-         111$
+	lwz          r5, 0x2E04 (r13)
+	addi         r4, r31, 928
+	lwz          r6, 0x0504 (r31)
+	bl           __ct__19BufferedInputStreamFP6StreamPUci
+111$:         
+	mr           r3, r29
+	b            117$
+112$:         
+	lwz          r27, 0x000C (r27)
+113$:         
+	cmplwi       r27, 0
+	bne+         110$
+114$:         
+	lwz          r4, 0x023C (r29)
+	addi         r0, r4, 1
+	stw          r0, 0x023C (r29)
+	addi         r3, sp, 28
+	addi         r27, r31, 1212
+	mr           r4, r27
+	stw          r3, 0x04B4 (r31)
+	bl           DVDOpen
+	neg          r3, r3
+	crclr        6
+	subic        r0, r3, 1
+	subfe        r0, r0, r3
+	stb          r0, 0x0500 (r31)
+	li           r0, 0
+	addi         r28, r31, 1280
+	stw          r0, 0x04F8 (r31)
+	addi         r3, r31, 948
+	lwz          r0, 0x04F0 (r31)
+	stw          r0, 0x04FC (r31)
+	lwz          r4, 0x04B4 (r31)
+	bl           sprintf
+	lwz          r3, 0x2E08 (r13)
+	addi         r0, r3, 1
+	stw          r0, 0x2E08 (r13)
+	lbz          r0, 0 (r28)
+	cmplwi       r0, 0
+	bne-         116$
+	lwz          r3, 0x2E08 (r13)
+	subi         r0, r3, 1
+	stw          r0, 0x2E08 (r13)
+	beq-         115$
+	mr           r3, r27
+	bl           DVDClose
+115$:         
+	li           r3, 0
+	b            117$
+116$:         
+	lwz          r4, 0x2DEC (r13)
+	li           r0, 1
+	addi         r5, r4, 0x001C
+	lwz          r6, 0x001C (r4)
+	stw          r0, 0 (r5)
+	lwz          r5, 0x2DEC (r13)
+	stw          r6, 0x001C (r5)
+	stw          r30, 0x04B4 (r31)
+	lwz          r5, 0x2E04 (r13)
+	lwz          r6, 0x025C (r29)
+	bl           init__19BufferedInputStreamFP6StreamPUci
+	addi         r3, r31, 1288
+
+117$:### Epilogue ###
+	lmw          r27, 0x0124 (sp)
+	lwz          r0, 0x013C (sp)
+	addi         sp, sp, 312
+	mtlr         r0
+	blr          
+
+

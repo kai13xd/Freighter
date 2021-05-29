@@ -1,0 +1,81 @@
+[8003f1a0]   loadTexture__9StdSystemFPcb 	sysCommon.a stdSystem.cpp
+[8003fe00]   loadBundle__9StdSystemFPcb 	sysCommon.a stdSystem.cpp
+[80044fcc]   parseArchiveDirectory__6SystemFPcPc 	sysDolphin.a system.cpp
+[801b2c50]   set__9P2DScreenFPCcbbb 	plugPikiYamashita.a P2DScreen.cpp
+[8006fef4]   loadCin__15CinematicPlayerFPc 	plugPikiColin.a cinePlayer.cpp
+[80070618]   addScene__15CinematicPlayerFP9SceneData 	plugPikiColin.a cinePlayer.cpp
+[8003f914]   getShape__9StdSystemFPcPcPcb 	sysCommon.a stdSystem.cpp
+[80034e20]   loadAnimation__9BaseShapeFPcb 	sysCommon.a shapeBase.cpp
+[8005fbfc]   init__13TitlesSectionFv 	plugPikiColin.a titles.cpp
+	"cinemas/opening.ini"
+[80053314]   readMapList__14FlowControllerFPc 	plugPikiColin.a game.cpp
+	"stages/stages.ini"
+
+[8010f084]   initStage__15GameCoreSectionFv 	plugPikiKando.a gameCoreSection.cpp
+	default gen
+[8010f194]   initStage__15GameCoreSectionFv 	plugPikiKando.a gameCoreSection.cpp
+	daily gen
+[8010f220]   initStage__15GameCoreSectionFv 	plugPikiKando.a gameCoreSection.cpp
+	init gen
+[8010f290]   initStage__15GameCoreSectionFv 	plugPikiKando.a gameCoreSection.cpp
+	plants gen
+[8010f358]   initStage__15GameCoreSectionFv 	plugPikiKando.a gameCoreSection.cpp
+	limit gen
+[8010f938]   initStage__15GameCoreSectionFv 	plugPikiKando.a gameCoreSection.cpp
+	ghost/record.gst
+
+[800406ec]   load__8CoreNodeFPcPcUl 	sysCommon.a node.cpp
+	parms/gamePrms.bin
+	parms/demo.bin
+	parms/sound.bin
+	parms/pelMgr.bin
+	parms/aiconst.bin
+	parms/key.bin
+	parms/naviMgr.bin
+	pikis/animMgr.bin
+	camera/camepara.bin
+	parms/pikiMgr.bin
+	parms/cunit.bin
+
+	All teki parms
+	All boss parms
+
+	All cinematic animmgrs
+	objects/ufo/ufo0705.bin
+	ItemMgr::initialize() animmgrs
+	PlantMgr::initialize() animmgrs
+	TekiMgr::startStage() animmgrs
+	boss animmgrs
+	objects/pelAnim.bin
+	everything defined in pelAnim
+
+
+[80045208]   ParseMapFile__Fv 	sysDolphin.a system.cpp
+[8006454c]   readScript__10DynObjBodyFP6MapMgrPc 	plugPikiColin.a mapMgr.cpp
+[8010f938]   initStage__15GameCoreSectionFv 	plugPikiKando.a gameCoreSection.cpp
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[80222eb0]
+[802a534c]
