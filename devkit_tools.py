@@ -1,116 +1,45 @@
 import subprocess 
 import os 
 from itertools import chain
-from dolreader import DolFile, SectionCountFull
-from doltools import branchlink, branch, apply_gecko
+from gc_c_kit import DolFile
+from gc_c_kit import branchlink, branch, apply_gecko
 
-GCCPATH = "C:\\devkitPro\\devkitPPC\\bin\\powerpc-eabi-gcc.exe"
-LDPATH = "C:\\devkitPro\\devkitPPC\\bin\\powerpc-eabi-ld.exe"
-OBJDUMPPATH = "C:\\devkitPro\\devkitPPC\\bin\\powerpc-eabi-objdump.exe"
-OBJCOPYPATH = "C:\\devkitPro\\devkitPPC\\bin\\powerpc-eabi-objcopy.exe"
-
-
-def compile(inpath, outpath, mode, optimize="-O1", std="c99", warning="-w"):
-    assert mode in ("-S", "-c") # turn into asm or compile 
-    #args = [GCCPATH, inpath, mode, "-o", outpath, optimize, "-std="+std, warning]
-    args = [GCCPATH, inpath, mode, "-o", outpath, optimize, warning]
-    print(args)
-    subprocess.call(args)
-    
-    
-def link(infiles, outfile, outmap, linker_files):
-    arg = [LDPATH]
-    arg.append("-Os")
-    for file in linker_files:
-        arg.append("-T")
-        arg.append(file)
-    
-    arg.extend(("-o", outfile))
-    
-    for file in infiles:
-        arg.append(file)
-    
-    arg.extend(("-Map", outmap))
-    print(arg)
-    subprocess.call(arg)
-    
-    
-def objdump(*args):
-    arg = [OBJDUMPPATH]
-    arg.extend(args)
-    print(arg)
-    subprocess.call(arg)
-
-
-def objcopy(*args, attrs = []):
-    arg = [OBJCOPYPATH]
-    arg.extend(args)
-    for attr in attrs:
-        arg.extend(("-R", attr))
-    print(arg)
-    subprocess.call(arg)
-    
-    
-def read_map(mappath):
-    result = {}
-    with open(mappath, "r") as f:
-        for line in f:
-            if line.startswith(".text"):
-                break 
-        
-        next = f.readline()
-        next2 = f.readline()
-        assert next.startswith(" *(.text)")
-        assert next2.startswith(" .text")
-        next = f.readline()
-        
-        while next.strip() != "":
-            vals = next.strip().split(" ")
-
-            for i in range(vals.count("")):
-                vals.remove("")
-            
-            addr = vals[0]
-            func = vals[1]
-            
-            result[func] = int(addr, 16) 
-            next = f.readline()
-    
-    return result 
-
+DEVKITPPC = "C:/devkitPro/devkitPPC/bin/"
+GCC = "powerpc-eabi-gcc.exe"
+AS = "powerpc-eabi-as.exe"
+LD = "powerpc-eabi-ld.exe"
+OBJDUMP = "powerpc-eabi-objdump.exe"
+OBJCOPY = "powerpc-eabi-objcopy.exe"
 
 class Project(object):
-    def __init__(self, dolpath, address=None, offset=None):
-        with open(dolpath,"rb") as f:
-            tmp = DolFile(f)
-        
-        try:
-            _offset, addr, size = tmp.allocate_text_section(4, address)
-        except SectionCountFull as e:
-            print(e)
-            try:
-                _offset, addr, size = tmp.allocate_data_section(4, address)
-            except SectionCountFull as e:
-                print(e)
-                raise RuntimeError("Dol is full! Cannot allocate any new sections")
-        
-        self._address = addr
-
-        if offset is not None:
-            self._address += offset
-        del tmp 
-        with open(dolpath,"rb") as f:
+    def __init__(self, dolpath, rom_end_addr=None):
+        # DOL member variables
+        with open(dolpath, "rb") as f:
             self.dol = DolFile(f)
+            # Check to see if the DOL has any spare sections
+            if self.dol.is_text_section_available() == False and self.dol.is_data_section_available() == False:
+                raise RuntimeError("Dol is full! Cannot allocate any new sections")
+        self.stack_size = 0x10000
+        self.db_stack_size = 0x2000
+        self.rom_end = rom_end_addr
         
+        # Compiling member variables
+        self.src_dir = "."
+        self.obj_dir = "."
+        self.project_name = "project"
         self.c_files = []
         self.asm_files = []
+        self.obj_files = []
+        self.linker_script_files = []
+        self.symbols = {}
+        self.optimization = "-O1"
+        self.c_std = "c99"
+        self.verbose = False
         
-        self.linker_files = []
-        
+        # Patches member variables
         self.branchlinks = []
         self.branches = []
-        
-        self.osarena_patcher = None 
+        self.osarena_patcher = None
         
         
     def add_file(self, filepath):
@@ -120,97 +49,141 @@ class Project(object):
         self.asm_files.append(filepath)
     
     def add_linker_file(self, filepath):
-        self.linker_files.append(filepath)
+        self.linker_script_files.append(filepath)
     
     def branchlink(self, addr, funcname):
         self.branchlinks.append((addr, funcname))
     
     def branch(self, addr, funcname):
         self.branches.append((addr, funcname))
-        
+    
     def set_osarena_patcher(self, function):
-        self.osarena_patcher = function 
+        self.osarena_patcher = function
         
     def apply_gecko(self, geckopath):
         with open(geckopath, "r") as f:
             apply_gecko(self.dol, f)
     
-    def build(self, newdolpath, address=None, offset=None):
-        os.makedirs("tmp", exist_ok=True)
+    def compile(self, infile):
+        args = [DEVKITPPC+GCC]
+        args.append(self.src_dir+"/"+infile)
+        args.append("-c")
+        args.extend(("-o", self.obj_dir+"/"+infile+".o"))
+        args.append(self.optimization)
+        args.append("-std="+self.c_std)
+        if self.verbose == True:
+            args.append("-w")
+        args.extend(("-I", self.src_dir))
+        print(args)
+        subprocess.call(args)
+        self.obj_files.append(infile+".o")
+    
+    def assemble(self, infile):
+        args = [DEVKITPPC+AS]
+        args.append(self.src_dir+"/"+infile)
+        args.extend(("-o", self.obj_dir+"/"+infile+".o"))
+        if self.verbose == True:
+            args.append("-w")
+        args.extend(("-I", self.src_dir))
+        print(args)
+        subprocess.call(args)
+        self.obj_files.append(infile+".o")
+    
+    def link(self):
+        args = [DEVKITPPC+LD]
+        args.append("-Os")
+        # The symbol "." represents the processor counter.  By setting it this way,
+        # we don't need a Linker Script to set the base address of our new code.
+        args.extend(("--defsym", ".="+hex(self.rom_end)))
         
-        for fpath in self.c_files:
-            compile(fpath, fpath+".s", mode="-S")
-            compile(fpath, fpath+".o", mode="-c")
+        for file in self.linker_script_files:
+            args.extend(("-T", file))
         
-        for fpath in self.asm_files:
-            compile(fpath, fpath+".o", mode="-c")
+        args.extend(("-o", self.obj_dir+"/"+self.project_name+".o"))
         
-        inputobjects = [fpath+".o" for fpath in chain(self.c_files, self.asm_files)]
-        with open("tmplink", "w") as f:
-            f.write("""SECTIONS
-{{
-    . = 0x{0:x};
-    .text : 
-    {{
-        *(.text)
-    }}
-	.rodata :
-	{{
-		*(.rodata*)
-	}}
-	.data :
-	{{
-		*(.data)
-	}}
-	. += 0x08;
-	.sdata :
-	{{
-		*(.sdata)
-	}}
-}}""".format(self._address))
-        linker_files = ["tmplink"]
-        for fpath in self.linker_files:
-            linker_files.append(fpath)
-        link(   [fpath+".o" for fpath in chain(self.c_files, self.asm_files)], 
-                "project.o", "project.map", linker_files)
+        for filename in self.obj_files:
+            args.append(self.obj_dir+"/"+filename)
         
-        objdump("project.o", "--full-content")
+        args.extend(("-Map", self.obj_dir+"/"+self.project_name+".map"))
+        print(args)
+        subprocess.call(args)
+    
+    def objdump(self):
+        args = [DEVKITPPC+OBJDUMP, self.obj_dir+"/"+self.project_name+".o", "--full-content"]
+        print(args)
+        subprocess.call(args)
+    
+    def objcopy(self):
+        arg = [DEVKITPPC+OBJCOPY]
+        arg.append(self.obj_dir+"/"+self.project_name+".o")
+        arg.append(self.obj_dir+"/"+self.project_name+".bin")
+        arg.extend(("-O", "binary"))
+        arg.append("-g")
+        arg.append("-S")
+        arg.extend(("-R", ".eh_frame"))
+        arg.extend(("-R", ".comment"))
+        arg.extend(("-R", ".gnu.attributes"))
+        print(arg)
+        subprocess.call(arg)
+    
+    def read_map(self):
+        with open(self.obj_dir+"/"+self.project_name+".map", "r") as f:
+            for next in f:
+                if len(next) < 50:
+                    continue
+                if next[34:50] != "                ":
+                    continue
+                
+                vals = next.strip().split(" ")
+                for i in range(vals.count("")):
+                    vals.remove("")
+                
+                addr = vals[0]
+                func = vals[1]
+                
+                self.symbols[func] = int(addr, 16)
+    
+    def build(self, newdolpath):
+        os.makedirs(self.src_dir, exist_ok=True)
+        os.makedirs(self.obj_dir, exist_ok=True)
         
-        objcopy("project.o", "project.bin", "-O", "binary", "-g", "-S", attrs=[".eh_frame", ".comment", ".gnu.attributes"])
+        for filepath in self.c_files:
+            self.compile(filepath)
         
-        with open("project.bin", "rb") as f:
+        for filepath in self.asm_files:
+            self.assemble(filepath)
+
+        self.link()
+        self.read_map()
+        self.objdump()
+        self.objcopy()
+        
+        with open(self.obj_dir+"/"+self.project_name+".bin", "rb") as f:
             data = f.read()
         
-        functions = read_map("project.map")
-        
-        offset, sectionaddr, size = self.dol.allocate_text_section(len(data), addr=self._address)
+        offset, sectionaddr, size = self.dol.allocate_text_section(len(data), addr=self.rom_end)
         
         self.dol.seek(sectionaddr)
         self.dol.write(data)
         
-        #print(("{0}: 0x{1:x}".format(funct
+        print(self.symbols)
         for addr, func in self.branches:
-            if func not in functions:
+            if func not in self.symbols:
                 print("Function not found in symbol map: {0}. Skipping...".format(func))
                 continue
                 #raise RuntimeError("Function not found in symbol map: {0}".format(func))
             
-            branch(self.dol, addr, functions[func])
+            branch(self.dol, addr, self.symbols[func])
         
         for addr, func in self.branchlinks:
-            if func not in functions:
+            if func not in self.symbols:
                 print("Function not found in symbol map: {0}. Skipping...".format(func))
                 continue
                 #raise RuntimeError("Function not found in symbol map: {0}".format(func))
             
-            branchlink(self.dol, addr, functions[func])
+            branchlink(self.dol, addr, self.symbols[func])
         
-        if self.osarena_patcher is not None:
-            self.osarena_patcher(self.dol, sectionaddr+size)
+        self.osarena_patcher(self)
         
         with open(newdolpath, "wb") as f:
             self.dol.save(f)
-        
-if __name__ == "__main__":
-    compile("main.c", "main.s", mode="-S")
-    compile("main.c", "main.o", mode="-c")

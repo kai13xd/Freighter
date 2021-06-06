@@ -165,16 +165,26 @@ class DolFile(object):
         
         return (last_offset, last_addr, newsize)
         
-    def allocate_text_section(self, size, addr=None):
+    def is_text_section_available(self):
         assert len(self._text) <= 7 
         if len(self._text) >= 7:
+            return False
+        return True
+    
+    def is_data_section_available(self):
+        assert len(self._data) <= 11 
+        if len(self._data) >= 11:
+            return False
+        return True
+    
+    def allocate_text_section(self, size, addr=None):
+        if self.is_text_section_available() == False:
             raise SectionCountFull("Maximum amount of text sections reached!")
         
         return self._add_section(size, self._text, addr)
     
     def allocate_data_section(self, size, addr=None):
-        assert len(self._data) <= 11 
-        if len(self._data) >= 11:
+        if self.is_data_section_available() == False:
             raise SectionCountFull("Maximum amount of data sections reached!")
         
         return self._add_section(size, self._data, addr=None)
