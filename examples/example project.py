@@ -1,4 +1,4 @@
-from gc_c_kit import Project, write_lis, write_ori
+from dol_c_kit import Project, write_lis, write_ori
 
 def patch_osarena_low(p):
 	new_stack_addr = p.rom_end + p.stack_size

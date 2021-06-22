@@ -212,13 +212,3 @@ class DolFile(object):
             
         print("bss addr: {0:x}, bss size: {1:x}, bss end: {2:x}".format(self.bssaddr, self.bsssize,
                                                                             self.bssaddr+ self.bsssize))
-        
-if __name__ == "__main__":
-    with open("pikmin.dol", "rb") as f:
-        dol = DolFile(f)
-    
-    dol.print_info()
-    dol.allocate_text_section(4)
-    dol.print_info()
-    
-        

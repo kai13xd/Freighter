@@ -2,120 +2,98 @@ from struct import pack
 from math import ceil 
 from binascii import unhexlify
 
-from gc_c_kit import write_uint32
+from dol_c_kit import write_uint32
 
-def range_check(val, bits):
-    if not (val <= 2**bits - 1):
-        raise RuntimeError("Value {0} exceeds size ({1} bits)".format(val, bits))
-
-def calc_signed(val, bits):
-    if val < 0:
-        res = 2**bits + val 
-        if res <= 2**(bits-1) - 1:
-            raise RuntimeError("Value out of range: {0}".format(val))
+def mask_field(val, bits, signed):
+    if signed == True:
+        # Lowest negative value
+        if val < -1 * 2**(bits-1):
+            raise RuntimeError("{0} too large for {1}-bit signed field".format(val, bits))
+        # Highest positive value
+        if val > 2**(bits-1) - 1:
+            raise RuntimeError("{0} too large for {1}-bit signed field".format(val, bits))
     else:
-        res = val 
-        if res > 2**(bits-1) - 1:
-            raise RuntimeError("Value out of range: {0}".format(val))
-    assert res == res & (2**bits - 1)
-    
-    return res 
+        # Highest unsigned value
+        if val > 2**bits - 1:
+            raise RuntimeError("{0} too large for {1}-bit unsigned field".format(val, bits))
+    return val & (2**bits - 1)
 
-def _branch(dol, from_addr, to_addr, link, absolute=False):
+
+def assemble_branch(addr, target_addr, LK=False, AA=False):
     out = 0
-    if link:
-        out |= 0b1 
-    if absolute:
-        out |= 0b10 # do an absolute branch. Doesn't work on the Gamecube
-    
-    delta = to_addr - from_addr 
-    print("Making branch: from {0:x} to {1:x}".format(from_addr, to_addr))
-    print("delta:", hex(delta))
+    # Calculate delta
+    delta = target_addr - addr
     assert delta % 4 == 0
-    delta = delta // 4
-    res = calc_signed(delta, 24)
-    """if delta < 0:
-        res = 2**24 + delta 
-        if res <= 2**23 - 1:
-            raise RuntimeError("Branch out of range: from {0} to {1}".format(from_addr, to_addr))
-    else:
-        res = delta  
-        if res > 2**23 - 1:
-            raise RuntimeError("Branch out of range: from {0} to {1}".format(from_addr, to_addr))"""
-    #res = res & (2**24 - 1)
-    
-    out |= (res << 2) # immediate value for branching 
-    out |= 18 << (2+24) # Opcode for branch 
-    
-    dol.seek(from_addr)
-    write_uint32(dol, out)
-    
-    
+    # Mask and range check
+    LI = mask_field(delta // 4, 24, True)
+    # Set fields
+    out |= (LK << 0)
+    out |= (AA << 1)
+    out |= (LI << 2)
+    out |= (18 << 26)
+    return out
 
-def branchlink(dol, from_addr, to_addr):
-    _branch(dol, from_addr, to_addr, True)
-    
-def branch(dol, from_addr, to_addr):
-    _branch(dol, from_addr, to_addr, False )
-
-def write_addi(dol, rD, rA, val, signed=True):
-    if signed:
-        simm = calc_signed(val, 16)
-    else:
-        simm = val 
-    
-    out = simm 
-    range_check(rD, 5)
-    range_check(rA, 5)
+def assemble_integer_arithmetic_immediate(opcd, rD, rA, SIMM):
+    out = 0
+    # Mask and range check
+    SIMM = mask_field(SIMM, 16, True)
+    rD = mask_field(rD, 5, False)
+    rA = mask_field(rA, 5, False)
+    # Set fields
+    out |= (SIMM << 0)
     out |= (rA << 16)
-    out |= (rD << (16+5))
-    out |= (14 << (16+5+5))
-    write_uint32(dol, out)
+    out |= (rD << 21)
+    out |= (opcd << 26)
+    return out
 
-def write_addis(dol, rD, rA, val, signed=True):
-    if signed:
-        simm = calc_signed(val, 16)
-    else:
-        simm = val 
-        
-    out = simm 
-    range_check(rD, 5)
-    range_check(rA, 5)
+def assemble_integer_logical_immediate(opcd, rS, rA, UIMM):
+    out = 0
+    # Mask and range check
+    mask_field(UIMM, 16, False)
+    mask_field(rS, 5, False)
+    mask_field(rA, 5, False)
+    # Set fields
+    out |= (UIMM << 0)
     out |= (rA << 16)
-    out |= (rD << (16+5))
-    out |= (15 << (16+5+5))
-    write_uint32(dol, out)
+    out |= (rS << 21)
+    out |= (opcd << 26)
+    return out
 
-def write_li(dol, rD, val, signed=True):
-    write_addi(dol, rD, 0, val, signed)
-
-def write_lis(dol, rD, val, signed=True):
-    write_addis(dol, rD, 0, val, signed)
-
-def write_ori(dol, rD, rA, val):
-    range_check(val, 16)
+# Assemble an instruction
+def assemble_addi(rD, rA, SIMM):
+    return assemble_integer_arithmetic_immediate(14, rD, rA, SIMM)
+def assemble_addis(rD, rA, SIMM):
+    return assemble_integer_arithmetic_immediate(15, rD, rA, SIMM)
+def assemble_ori(rS, rA, UIMM):
+    return assemble_integer_logical_immediate(24, rS, rA, UIMM)
+def assemble_oris(rS, rA, SIMM):
+    return assemble_integer_logical_immediate(25, rS, rA, UIMM)
+# Simplified mnenonics
+def assemble_li(rD, SIMM):
+    return assemble_addi(rD, 0, SIMM)
+def assemble_lis(rD, SIMM):
+    return assemble_addis(rD, 0, SIMM)
+def assemble_nop():
+    return assemble_ori(0, 0, 0)
     
-    out = val
-    range_check(rD, 5)
-    range_check(rA, 5)
-    out |= (rA << 16)
-    out |= (rD << (16+5))
-    out |= (24 << (16+5+5))
-    write_uint32(dol, out)
-
-def write_oris(dol, rD, rA, val):
-    range_check(val, 16)
-    
-    out = val
-    range_check(rD, 5)
-    range_check(rA, 5)
-    out |= (rA << 16)
-    out |= (rD << (16+5))
-    out |= (25 << (16+5+5))
-    write_uint32(dol, out)
-    
+# Write instructions to DOL
+def write_branch(dol, target_addr, LK=False, AA=False):
+    write_uint32(dol, assemble_branch(dol.tell(), target_addr, LK, AA))
+def write_addi(dol, rD, rA, SIMM):
+    write_uint32(dol, assemble_addi(rD, rA, SIMM))
+def write_addis(dol, rD, rA, SIMM):
+    write_uint32(dol, assemble_addis(rD, rA, SIMM))
+def write_ori(dol, rS, rA, UIMM):
+    write_uint32(dol, assemble_ori(rS, rA, UIMM))
+def write_oris(dol, rS, rA, UIMM):
+    write_uint32(dol, assemble_oris(rS, rA, UIMM))
+# Simplified mnenonics
+def write_li(dol, rD, SIMM):
+    write_uint32(dol, assemble_li(rD, SIMM))
+def write_lis(dol, rD, SIMM):
+    write_uint32(dol, assemble_lis(rD, SIMM))
 def write_nop(dol):
-    write_ori(dol, 0, 0, 0)
+    write_uint32(dol, assemble_nop())
 
 
 def _read_line(line):
@@ -183,8 +161,5 @@ def apply_gecko(dol, f):
                 bytecount -= 8 
         
         elif codetype == 0xC6:
-            branch(dol, addr, val2)
-                
-                
-            
-            
+            dol.seek(addr)
+            write_branch(dol, val2, LK=False)

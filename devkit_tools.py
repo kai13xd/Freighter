@@ -1,27 +1,17 @@
-import subprocess 
-import os 
-from itertools import chain
-from gc_c_kit import DolFile
-from gc_c_kit import branchlink, branch, apply_gecko
-
-DEVKITPPC = "C:/devkitPro/devkitPPC/bin/"
-GCC = "powerpc-eabi-gcc.exe"
-AS = "powerpc-eabi-as.exe"
-LD = "powerpc-eabi-ld.exe"
-OBJDUMP = "powerpc-eabi-objdump.exe"
-OBJCOPY = "powerpc-eabi-objcopy.exe"
+import subprocess
+import os
+import struct
+from dol_c_kit import DolFile, write_uint32
+from dol_c_kit import assemble_branch, write_branch, apply_gecko
+from dol_c_kit import gecko_04write, gecko_C6write
 
 class Project(object):
-    def __init__(self, dolpath, rom_end_addr=None):
-        # DOL member variables
-        with open(dolpath, "rb") as f:
-            self.dol = DolFile(f)
-            # Check to see if the DOL has any spare sections
-            if self.dol.is_text_section_available() == False and self.dol.is_data_section_available() == False:
-                raise RuntimeError("Dol is full! Cannot allocate any new sections")
-        self.stack_size = 0x10000
-        self.db_stack_size = 0x2000
-        self.rom_end = rom_end_addr
+    def __init__(self, base_addr=None, verbose=False):
+        self.is_expanded = False
+        self.base_addr = base_addr
+        
+        # System member variables
+        self.devkitppc_path = "C:/devkitPro/devkitPPC/bin"
         
         # Compiling member variables
         self.src_dir = "."
@@ -34,67 +24,185 @@ class Project(object):
         self.symbols = {}
         self.optimization = "-O1"
         self.c_std = "c99"
-        self.verbose = False
+        self.verbose = verbose
         
         # Patches member variables
         self.branchlinks = []
         self.branches = []
+        self.pointers = []
+        self.gecko_txt_files = []
+        self.gecko_gct_files = []
         self.osarena_patcher = None
         
         
-    def add_file(self, filepath):
+    def add_c_file(self, filepath):
         self.c_files.append(filepath)
         
     def add_asm_file(self, filepath):
         self.asm_files.append(filepath)
     
-    def add_linker_file(self, filepath):
+    def add_linker_script_file(self, filepath):
         self.linker_script_files.append(filepath)
     
-    def branchlink(self, addr, funcname):
-        self.branchlinks.append((addr, funcname))
+    def add_gecko_txt_file(self, filepath):
+        self.gecko_txt_files.append(filepath)
     
-    def branch(self, addr, funcname):
-        self.branches.append((addr, funcname))
+#    def add_gecko_gct_file(self, filepath):
+#        self.gecko_gct_files.append(filepath)
+    
+    def add_branch(self, addr, funcname, LK=False):
+        self.branches.append((addr, funcname, LK))
+    
+    def add_pointer(self, addr, funcname):
+        self.pointers.append((addr, funcname))
     
     def set_osarena_patcher(self, function):
         self.osarena_patcher = function
-        
-    def apply_gecko(self, geckopath):
-        with open(geckopath, "r") as f:
-            apply_gecko(self.dol, f)
     
-    def compile(self, infile):
-        args = [DEVKITPPC+GCC]
+    def build(self):
+        os.makedirs(self.src_dir, exist_ok=True)
+        os.makedirs(self.obj_dir, exist_ok=True)
+        
+        for filepath in self.c_files:
+            self.is_expanded = True
+            self.__compile(filepath)
+        
+        for filepath in self.asm_files:
+            self.is_expanded = True
+            self.__assemble(filepath)
+        
+        if self.is_expanded == True:
+            self.__link_project()
+            self.__read_map()
+            self.__objcopy_project()
+            
+            if self.verbose:
+                self.__objdump_project()
+                print("")
+                for key, val in self.symbols.items():
+                    print("{0:x} {1:s}".format(val, key))
+                print("")
+    
+    def save_dol(self, in_dol_path, out_dol_path):
+        with open(in_dol_path, "rb") as f:
+            dol = DolFile(f)
+        
+        if self.is_expanded == True:
+            with open(self.obj_dir+"/"+self.project_name+".bin", "rb") as f:
+                data = f.read()
+            
+            if dol.is_text_section_available():
+                offset, sectionaddr, size = dol.allocate_text_section(len(data), addr=self.base_addr)
+            elif dol.is_data_section_available():
+                offset, sectionaddr, size = dol.allocate_text_section(len(data), addr=self.base_addr)
+            else:
+                raise RuntimeError("DOL is full!  Cannot allocate any new sections.")
+            
+            dol.seek(sectionaddr)
+            dol.write(data)
+            
+            for addr, sym_name, lk_bit in self.branches:
+                if sym_name not in self.symbols:
+                    print("Undefined Symbol: {0}.  Skipping...".format(sym_name))
+                    continue
+                if self.verbose:
+                    print("Branch{0:s} @ {1:08X} to {2:s}".format("link" if lk_bit else "", addr, sym_name))
+                dol.seek(addr)
+                write_branch(dol, self.symbols[sym_name], LK=lk_bit)
+            
+            for addr, sym_name in self.pointers:
+                if sym_name not in self.symbols:
+                    print("Undefined Symbol: {0}.  Skipping...".format(sym_name))
+                    continue
+                if self.verbose:
+                    print("Pointer @ {0:08x} to {1:s}".format(addr, sym_name))
+                dol.seek(addr)
+                write_uint32(dol, self.symbols[sym_name])
+            
+            self.osarena_patcher(dol, self.base_addr + len(data))
+        
+        self.__apply_gecko(dol)
+        
+        with open(out_dol_path, "wb") as f:
+            dol.save(f)
+    
+    def save_gecko(self, gecko_path):
+        with open(gecko_path, "w") as f:
+            if self.is_expanded == True:
+                with open(self.obj_dir+"/"+self.project_name+".bin", "rb") as bin:
+                    data = bin.read()
+                # Pad new data to next multiple of 8 for the Gecko Codehandler
+                len_real = len(data)
+                while (len(data) % 8) != 0:
+                    data += b'\x00'
+            
+                f.write("$Program Code\n")
+                f.write("{:08X} {:08X}\n".format((self.base_addr & 0x01FFFFFC) | 0x06000000, len_real))
+                for i in range(0, len(data), 8):
+                    word1 = struct.unpack_from(">I", data, i  )[0]
+                    word2 = struct.unpack_from(">I", data, i+4)[0]
+                    f.write("{:08X} {:08X}\n".format(word1, word2))
+            
+            f.write("$Branches\n")
+            for addr, sym_name, lk_bit in self.branches:
+                if sym_name not in self.symbols:
+                    print("Undefined Symbol: {0}.  Skipping...".format(sym_name))
+                    continue
+                if self.verbose:
+                    print("Branch{0:s} @ {1:08X} to {2:s}".format("link" if lk_bit else "", addr, sym_name))
+                f.write(gecko_C6write(addr, self.symbols[sym_name], lk_bit) + "\n")
+            
+            f.write("$Pointers\n")
+            for addr, sym_name in self.pointers:
+                if sym_name not in self.symbols:
+                    print("Undefined Symbol: {0}.  Skipping...".format(sym_name))
+                    continue
+                if self.verbose:
+                    print("Pointer @ {0:08X} to {1:s}".format(addr, sym_name))
+                f.write(gecko_04write(addr, self.symbols[sym_name]) + "\n")
+    
+    def cleanup(self):
+        for filename in self.obj_files:
+            os.remove(self.obj_dir+"/"+filename)
+        self.obj_files.clear()
+        os.remove(self.obj_dir+"/"+self.project_name+".o")
+        os.remove(self.obj_dir+"/"+self.project_name+".bin")
+        os.remove(self.obj_dir+"/"+self.project_name+".map")
+        self.symbols.clear()
+    
+    def __compile(self, infile):
+        args = [self.devkitppc_path+"/"+"powerpc-eabi-gcc.exe"]
         args.append(self.src_dir+"/"+infile)
         args.append("-c")
         args.extend(("-o", self.obj_dir+"/"+infile+".o"))
         args.append(self.optimization)
         args.append("-std="+self.c_std)
-        if self.verbose == True:
-            args.append("-w")
+        args.append("-w")
         args.extend(("-I", self.src_dir))
-        print(args)
+        if self.verbose:
+            print(args)
         subprocess.call(args)
         self.obj_files.append(infile+".o")
     
-    def assemble(self, infile):
-        args = [DEVKITPPC+AS]
+    def __assemble(self, infile):
+        args = [self.devkitppc_path+"/"+"powerpc-eabi-as.exe"]
         args.append(self.src_dir+"/"+infile)
         args.extend(("-o", self.obj_dir+"/"+infile+".o"))
-        if self.verbose == True:
-            args.append("-w")
+        args.append("-w")
         args.extend(("-I", self.src_dir))
-        print(args)
+        if self.verbose:
+            print(args)
         subprocess.call(args)
         self.obj_files.append(infile+".o")
     
-    def link(self):
-        args = [DEVKITPPC+LD]
-        args.append("-Os")
-        # The symbol "." represents the processor counter.  By setting it this way,
-        # we don't need a Linker Script to set the base address of our new code.
-        args.extend(("--defsym", ".="+hex(self.rom_end)))
+    def __link_project(self):
+        if self.base_addr == None:
+            raise RuntimeError("ROM end address not set!  New code cannot be linked.")
+        
+        args = [self.devkitppc_path+"/"+"powerpc-eabi-ld.exe"]
+        # The symbol "." represents the location counter.  By setting it this way,
+        # we don't need a linker script to set the base address of our new code.
+        args.extend(("--defsym", ".="+hex(self.base_addr)))
         
         for file in self.linker_script_files:
             args.extend(("-T", file))
@@ -105,28 +213,30 @@ class Project(object):
             args.append(self.obj_dir+"/"+filename)
         
         args.extend(("-Map", self.obj_dir+"/"+self.project_name+".map"))
-        print(args)
+        if self.verbose:
+            print(args)
         subprocess.call(args)
     
-    def objdump(self):
-        args = [DEVKITPPC+OBJDUMP, self.obj_dir+"/"+self.project_name+".o", "--full-content"]
-        print(args)
+    def __objdump_project(self):
+        args = [self.devkitppc_path+"/"+"powerpc-eabi-objdump.exe", self.obj_dir+"/"+self.project_name+".o", "--full-content"]
+        if self.verbose:
+            print(args)
         subprocess.call(args)
     
-    def objcopy(self):
-        arg = [DEVKITPPC+OBJCOPY]
+    def __objcopy_project(self):
+        arg = [self.devkitppc_path+"/"+"powerpc-eabi-objcopy.exe"]
         arg.append(self.obj_dir+"/"+self.project_name+".o")
         arg.append(self.obj_dir+"/"+self.project_name+".bin")
         arg.extend(("-O", "binary"))
-        arg.append("-g")
         arg.append("-S")
         arg.extend(("-R", ".eh_frame"))
         arg.extend(("-R", ".comment"))
         arg.extend(("-R", ".gnu.attributes"))
-        print(arg)
+        if self.verbose:
+            print(arg)
         subprocess.call(arg)
     
-    def read_map(self):
+    def __read_map(self):
         with open(self.obj_dir+"/"+self.project_name+".map", "r") as f:
             for next in f:
                 if len(next) < 50:
@@ -143,47 +253,10 @@ class Project(object):
                 
                 self.symbols[func] = int(addr, 16)
     
-    def build(self, newdolpath):
-        os.makedirs(self.src_dir, exist_ok=True)
-        os.makedirs(self.obj_dir, exist_ok=True)
-        
-        for filepath in self.c_files:
-            self.compile(filepath)
-        
-        for filepath in self.asm_files:
-            self.assemble(filepath)
-
-        self.link()
-        self.read_map()
-        self.objdump()
-        self.objcopy()
-        
-        with open(self.obj_dir+"/"+self.project_name+".bin", "rb") as f:
-            data = f.read()
-        
-        offset, sectionaddr, size = self.dol.allocate_text_section(len(data), addr=self.rom_end)
-        
-        self.dol.seek(sectionaddr)
-        self.dol.write(data)
-        
-        print(self.symbols)
-        for addr, func in self.branches:
-            if func not in self.symbols:
-                print("Function not found in symbol map: {0}. Skipping...".format(func))
-                continue
-                #raise RuntimeError("Function not found in symbol map: {0}".format(func))
-            
-            branch(self.dol, addr, self.symbols[func])
-        
-        for addr, func in self.branchlinks:
-            if func not in self.symbols:
-                print("Function not found in symbol map: {0}. Skipping...".format(func))
-                continue
-                #raise RuntimeError("Function not found in symbol map: {0}".format(func))
-            
-            branchlink(self.dol, addr, self.symbols[func])
-        
-        self.osarena_patcher(self)
-        
-        with open(newdolpath, "wb") as f:
-            self.dol.save(f)
+    def __apply_gecko(self, dol):
+        for file in self.gecko_txt_files:
+            with open(file, "r") as f:
+                apply_gecko(dol, f)
+#        for file in self.gecko_gct_files:
+#            with open(file, "r") as f:
+#                something to process GCT files here
