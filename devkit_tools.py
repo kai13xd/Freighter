@@ -53,6 +53,9 @@ class Project(object):
     def add_branch(self, addr, funcname, LK=False):
         self.branches.append((addr, funcname, LK))
     
+    def add_branchlink(self, addr, funcname):
+        self.add_branch(addr, funcname, LK=True)
+    
     def add_pointer(self, addr, funcname):
         self.pointers.append((addr, funcname))
     
