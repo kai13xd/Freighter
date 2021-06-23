@@ -46,7 +46,7 @@ def assemble_integer_arithmetic_immediate(opcd, rD, rA, SIMM):
     out |= (opcd << 26)
     return out
 
-def assemble_integer_logical_immediate(opcd, rS, rA, UIMM):
+def assemble_integer_logical_immediate(opcd, rA, rS, UIMM):
     out = 0
     # Mask and range check
     mask_field(UIMM, 16, False)
@@ -64,10 +64,10 @@ def assemble_addi(rD, rA, SIMM):
     return assemble_integer_arithmetic_immediate(14, rD, rA, SIMM)
 def assemble_addis(rD, rA, SIMM):
     return assemble_integer_arithmetic_immediate(15, rD, rA, SIMM)
-def assemble_ori(rS, rA, UIMM):
-    return assemble_integer_logical_immediate(24, rS, rA, UIMM)
-def assemble_oris(rS, rA, SIMM):
-    return assemble_integer_logical_immediate(25, rS, rA, UIMM)
+def assemble_ori(rA, rS, UIMM):
+    return assemble_integer_logical_immediate(24, rA, rS, UIMM)
+def assemble_oris(rA, rS, UIMM):
+    return assemble_integer_logical_immediate(25, rA, rS, UIMM)
 # Simplified mnenonics
 def assemble_li(rD, SIMM):
     return assemble_addi(rD, 0, SIMM)
@@ -83,10 +83,10 @@ def write_addi(dol, rD, rA, SIMM):
     write_uint32(dol, assemble_addi(rD, rA, SIMM))
 def write_addis(dol, rD, rA, SIMM):
     write_uint32(dol, assemble_addis(rD, rA, SIMM))
-def write_ori(dol, rS, rA, UIMM):
-    write_uint32(dol, assemble_ori(rS, rA, UIMM))
-def write_oris(dol, rS, rA, UIMM):
-    write_uint32(dol, assemble_oris(rS, rA, UIMM))
+def write_ori(dol, rA, rS, UIMM):
+    write_uint32(dol, assemble_ori(rA, rS, UIMM))
+def write_oris(dol, rA, rS, UIMM):
+    write_uint32(dol, assemble_oris(rA, rS, UIMM))
 # Simplified mnenonics
 def write_li(dol, rD, SIMM):
     write_uint32(dol, assemble_li(rD, SIMM))
