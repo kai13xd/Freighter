@@ -7,7 +7,7 @@ from dol_c_kit import gecko_04write, gecko_C6write
 
 class Project(object):
     def __init__(self, base_addr=None, verbose=False):
-        self.is_expanded = False
+        self.is_built = False
         self.base_addr = base_addr
         
         # System member variables
@@ -67,14 +67,14 @@ class Project(object):
         os.makedirs(self.obj_dir, exist_ok=True)
         
         for filepath in self.c_files:
-            self.is_expanded = True
+            self.is_built = True
             self.__compile(filepath)
         
         for filepath in self.asm_files:
-            self.is_expanded = True
+            self.is_built = True
             self.__assemble(filepath)
         
-        if self.is_expanded == True:
+        if self.is_built == True:
             self.__link_project()
             self.__read_map()
             self.__objcopy_project()
@@ -90,7 +90,7 @@ class Project(object):
         with open(in_dol_path, "rb") as f:
             dol = DolFile(f)
         
-        if self.is_expanded == True:
+        if self.is_built == True:
             with open(self.obj_dir+"/"+self.project_name+".bin", "rb") as f:
                 data = f.read()
             
@@ -131,7 +131,7 @@ class Project(object):
     
     def save_gecko(self, gecko_path):
         with open(gecko_path, "w") as f:
-            if self.is_expanded == True:
+            if self.is_built == True:
                 with open(self.obj_dir+"/"+self.project_name+".bin", "rb") as bin:
                     data = bin.read()
                 # Pad new data to next multiple of 8 for the Gecko Codehandler
@@ -165,13 +165,15 @@ class Project(object):
                 f.write(gecko_04write(addr, self.symbols[sym_name]) + "\n")
     
     def cleanup(self):
-        for filename in self.obj_files:
-            os.remove(self.obj_dir+"/"+filename)
+        if self.is_built == True:
+            for filename in self.obj_files:
+                os.remove(self.obj_dir+"/"+filename)
+            os.remove(self.obj_dir+"/"+self.project_name+".o")
+            os.remove(self.obj_dir+"/"+self.project_name+".bin")
+            os.remove(self.obj_dir+"/"+self.project_name+".map")
         self.obj_files.clear()
-        os.remove(self.obj_dir+"/"+self.project_name+".o")
-        os.remove(self.obj_dir+"/"+self.project_name+".bin")
-        os.remove(self.obj_dir+"/"+self.project_name+".map")
         self.symbols.clear()
+        self.is_built = False
     
     def __compile(self, infile):
         args = [self.devkitppc_path+"/"+"powerpc-eabi-gcc.exe"]
