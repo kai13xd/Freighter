@@ -13,13 +13,13 @@ class Project(object):
         
         # System member variables
         if platform.system() == "Windows":
-            self.devkitppc_path = "C:/devkitPro/devkitPPC/bin"
+            self.devkitppc_path = "C:/devkitPro/devkitPPC/bin/"
         else:
-            self.devkitppc_path = "/opt/devkitpro/devkitPPC/bin"
+            self.devkitppc_path = "/opt/devkitpro/devkitPPC/bin/"
         
         # Compiling member variables
-        self.src_dir = "."
-        self.obj_dir = "."
+        self.src_dir = ""
+        self.obj_dir = ""
         self.project_name = "project"
         self.c_files = []
         self.asm_files = []
@@ -95,7 +95,7 @@ class Project(object):
             dol = DolFile(f)
         
         if self.is_built == True:
-            with open(self.obj_dir+"/"+self.project_name+".bin", "rb") as f:
+            with open(self.obj_dir+self.project_name+".bin", "rb") as f:
                 data = f.read()
             
             if dol.is_text_section_available():
@@ -136,7 +136,7 @@ class Project(object):
     def save_gecko(self, gecko_path):
         with open(gecko_path, "w") as f:
             if self.is_built == True:
-                with open(self.obj_dir+"/"+self.project_name+".bin", "rb") as bin:
+                with open(self.obj_dir+self.project_name+".bin", "rb") as bin:
                     data = bin.read()
                 # Pad new data to next multiple of 8 for the Gecko Codehandler
                 len_real = len(data)
@@ -171,19 +171,19 @@ class Project(object):
     def cleanup(self):
         if self.is_built == True:
             for filename in self.obj_files:
-                os.remove(self.obj_dir+"/"+filename)
-            os.remove(self.obj_dir+"/"+self.project_name+".o")
-            os.remove(self.obj_dir+"/"+self.project_name+".bin")
-            os.remove(self.obj_dir+"/"+self.project_name+".map")
+                os.remove(self.obj_dir+filename)
+            os.remove(self.obj_dir+self.project_name+".o")
+            os.remove(self.obj_dir+self.project_name+".bin")
+            os.remove(self.obj_dir+self.project_name+".map")
         self.obj_files.clear()
         self.symbols.clear()
         self.is_built = False
     
     def __compile(self, infile):
-        args = [self.devkitppc_path+"/"+"powerpc-eabi-gcc"]
-        args.append(self.src_dir+"/"+infile)
+        args = [self.devkitppc_path+"powerpc-eabi-gcc"]
+        args.append(self.src_dir+infile)
         args.append("-c")
-        args.extend(("-o", self.obj_dir+"/"+infile+".o"))
+        args.extend(("-o", self.obj_dir+infile+".o"))
         args.append(self.optimization)
         args.append("-std="+self.c_std)
         args.append("-w")
@@ -194,9 +194,9 @@ class Project(object):
         self.obj_files.append(infile+".o")
     
     def __assemble(self, infile):
-        args = [self.devkitppc_path+"/"+"powerpc-eabi-as"]
-        args.append(self.src_dir+"/"+infile)
-        args.extend(("-o", self.obj_dir+"/"+infile+".o"))
+        args = [self.devkitppc_path+"powerpc-eabi-as"]
+        args.append(self.src_dir+infile)
+        args.extend(("-o", self.obj_dir+infile+".o"))
         args.append("-w")
         args.extend(("-I", self.src_dir))
         if self.verbose:
@@ -208,7 +208,7 @@ class Project(object):
         if self.base_addr == None:
             raise RuntimeError("ROM end address not set!  New code cannot be linked.")
         
-        args = [self.devkitppc_path+"/"+"powerpc-eabi-ld"]
+        args = [self.devkitppc_path+"powerpc-eabi-ld"]
         # The symbol "." represents the location counter.  By setting it this way,
         # we don't need a linker script to set the base address of our new code.
         args.extend(("--defsym", ".="+hex(self.base_addr)))
@@ -216,26 +216,26 @@ class Project(object):
         for file in self.linker_script_files:
             args.extend(("-T", file))
         
-        args.extend(("-o", self.obj_dir+"/"+self.project_name+".o"))
+        args.extend(("-o", self.obj_dir+self.project_name+".o"))
         
         for filename in self.obj_files:
-            args.append(self.obj_dir+"/"+filename)
+            args.append(self.obj_dir+filename)
         
-        args.extend(("-Map", self.obj_dir+"/"+self.project_name+".map"))
+        args.extend(("-Map", self.obj_dir+self.project_name+".map"))
         if self.verbose:
             print(args)
         subprocess.call(args)
     
     def __objdump_project(self):
-        args = [self.devkitppc_path+"/"+"powerpc-eabi-objdump", self.obj_dir+"/"+self.project_name+".o", "--full-content"]
+        args = [self.devkitppc_path+"powerpc-eabi-objdump", self.obj_dir+self.project_name+".o", "--full-content"]
         if self.verbose:
             print(args)
         subprocess.call(args)
     
     def __objcopy_project(self):
-        arg = [self.devkitppc_path+"/"+"powerpc-eabi-objcopy"]
-        arg.append(self.obj_dir+"/"+self.project_name+".o")
-        arg.append(self.obj_dir+"/"+self.project_name+".bin")
+        arg = [self.devkitppc_path+"powerpc-eabi-objcopy"]
+        arg.append(self.obj_dir+self.project_name+".o")
+        arg.append(self.obj_dir+self.project_name+".bin")
         arg.extend(("-O", "binary"))
         arg.append("-S")
         arg.extend(("-R", ".eh_frame"))
@@ -246,7 +246,7 @@ class Project(object):
         subprocess.call(arg)
     
     def __read_map(self):
-        with open(self.obj_dir+"/"+self.project_name+".map", "r") as f:
+        with open(self.obj_dir+self.project_name+".map", "r") as f:
             for next in f:
                 if len(next) < 50:
                     continue
