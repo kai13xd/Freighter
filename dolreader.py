@@ -177,6 +177,13 @@ class DolFile(object):
             return False
         return True
     
+    def find_rom_end(self):
+        rom_end = 0x80000000
+        for offset, address, size in self.sections:
+            if address + size > rom_end:
+                rom_end = address + size
+        return rom_end
+    
     def allocate_text_section(self, size, addr=None):
         if self.is_text_section_available() == False:
             raise SectionCountFull("Maximum amount of text sections reached!")

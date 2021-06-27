@@ -66,33 +66,15 @@ class Project(object):
     def set_osarena_patcher(self, function):
         self.osarena_patcher = function
     
-    def build(self):
-        os.makedirs(self.src_dir, exist_ok=True)
-        os.makedirs(self.obj_dir, exist_ok=True)
-        
-        for filepath in self.c_files:
-            self.is_built = True
-            self.__compile(filepath)
-        
-        for filepath in self.asm_files:
-            self.is_built = True
-            self.__assemble(filepath)
-        
-        if self.is_built == True:
-            self.__link_project()
-            self.__read_map()
-            self.__objcopy_project()
-            
-            if self.verbose:
-                self.__objdump_project()
-                print("")
-                for key, val in self.symbols.items():
-                    print("{0:x} {1:s}".format(val, key))
-                print("")
-    
-    def save_dol(self, in_dol_path, out_dol_path):
+    def build_dol(self, in_dol_path, out_dol_path):
         with open(in_dol_path, "rb") as f:
             dol = DolFile(f)
+        
+        if self.base_addr == None:
+            self.base_addr = (dol.find_rom_end() + 7) & 0xFFFFFFF8
+            print("Base address auto-set to {0:X}\n".format(self.base_addr))
+        
+        self.__build_project()
         
         if self.is_built == True:
             with open(self.obj_dir+self.project_name+".bin", "rb") as f:
@@ -101,7 +83,7 @@ class Project(object):
             if dol.is_text_section_available():
                 offset, sectionaddr, size = dol.allocate_text_section(len(data), addr=self.base_addr)
             elif dol.is_data_section_available():
-                offset, sectionaddr, size = dol.allocate_text_section(len(data), addr=self.base_addr)
+                offset, sectionaddr, size = dol.allocate_data_section(len(data), addr=self.base_addr)
             else:
                 raise RuntimeError("DOL is full!  Cannot allocate any new sections.")
             
@@ -133,7 +115,9 @@ class Project(object):
         with open(out_dol_path, "wb") as f:
             dol.save(f)
     
-    def save_gecko(self, gecko_path):
+    def build_gecko(self, gecko_path):
+        self.__build_project()
+        
         with open(gecko_path, "w") as f:
             if self.is_built == True:
                 with open(self.obj_dir+self.project_name+".bin", "rb") as bin:
@@ -206,7 +190,7 @@ class Project(object):
     
     def __link_project(self):
         if self.base_addr == None:
-            raise RuntimeError("ROM end address not set!  New code cannot be linked.")
+            raise RuntimeError("Base address not set!  New code cannot be linked.")
         
         args = [self.devkitppc_path+"powerpc-eabi-ld"]
         # The symbol "." represents the location counter.  By setting it this way,
@@ -261,6 +245,30 @@ class Project(object):
                 func = vals[1]
                 
                 self.symbols[func] = int(addr, 16)
+    
+    def __build_project(self):
+        os.makedirs(self.src_dir, exist_ok=True)
+        os.makedirs(self.obj_dir, exist_ok=True)
+        
+        for filepath in self.c_files:
+            self.is_built = True
+            self.__compile(filepath)
+        
+        for filepath in self.asm_files:
+            self.is_built = True
+            self.__assemble(filepath)
+        
+        if self.is_built == True:
+            self.__link_project()
+            self.__read_map()
+            self.__objcopy_project()
+            
+            if self.verbose:
+                self.__objdump_project()
+                print("")
+                for key, val in self.symbols.items():
+                    print("{0:x} {1:s}".format(val, key))
+                print("")
     
     def __apply_gecko(self, dol):
         for file in self.gecko_txt_files:
