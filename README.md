@@ -47,7 +47,8 @@ Give your project a game-specific patching function to use to allocate space for
 
 ## Step 2: Build the project
 * `build_dol(in_dol_path, out_dol_path)`<br>
-Compile, assemble, and link all source files into a single binary file.  Save changes to a \*.dol executable.  If no base_addr is specified, the ROM end will automatically be detected and used.  A new text section will be allocated to contain the new data.  If no text sections are available, a data section will be allocated instead.
+Compile, assemble, and link all source files into a single binary file.  Save changes to a \*.dol executable.  If no base_addr is specified, the ROM end will automatically be detected and used.  A new text section will be allocated to contain the new data.  If no text sections are available, a data section will be allocated instead.<br>
+Note: Automatic ROM end detection does not work for DOLs that allocate space for .sbss2.
 
 * `build_gecko(gecko_path)`<br>
 !! This feature is a WIP !!  Compile, assemble, and link all source files into a single binary file.  Save changes to a large Gecko codelist.  OSArenaLo patchers are not used, and likely never will be worth implementing be due to timing limitations of Gecko codes.  Instead, existing data must be overwritten.  At the moment, Gecko codes included by the add_gecko_txt_file function are discared.
