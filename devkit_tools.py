@@ -71,8 +71,12 @@ class Project(object):
             dol = DolFile(f)
         
         if self.base_addr == None:
-            self.base_addr = (dol.find_rom_end() + 7) & 0xFFFFFFF8
-            print("Base address auto-set to {0:X}\n".format(self.base_addr))
+            self.base_addr = (dol.find_rom_end() + 31) & 0xFFFFFFE0
+            print("Base address auto-set from ROM end: {0:X}\n"
+                  "Do not rely on this feature if your DOL uses .sbss2\n".format(self.base_addr))
+        
+        if self.base_addr % 32:
+            print("WARNING!  DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
         
         self.__build_project()
         
