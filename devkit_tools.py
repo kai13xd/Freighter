@@ -6,6 +6,26 @@ from dol_c_kit import DolFile, write_uint32
 from dol_c_kit import assemble_branch, write_branch, apply_gecko
 from dol_c_kit import gecko_04write, gecko_C6write
 
+from elftools.elf.elffile import ELFFile
+
+class Hook(object):
+    def __init__(self, addr, sym_name):
+        self.good = False
+        self.kind = "Hook"
+        self.addr = addr
+        self.sym_name = sym_name
+
+class BranchHook(Hook):
+    def __init__(self, addr, sym_name, lk_bit):
+        Hook.__init__(self, addr, sym_name)
+        self.kind = "Branchlink" if lk_bit else "Branch"
+        self.lk_bit = lk_bit
+
+class PointerHook(Hook):
+    def __init__(self, addr, sym_name):
+        Hook.__init__(self, addr, sym_name)
+        self.kind = "Pointer"
+
 class Project(object):
     def __init__(self, base_addr=None, verbose=False):
         self.is_built = False
@@ -31,9 +51,7 @@ class Project(object):
         self.verbose = verbose
         
         # Patches member variables
-        self.branchlinks = []
-        self.branches = []
-        self.pointers = []
+        self.hooks = []
         self.gecko_txt_files = []
         self.gecko_gct_files = []
         self.osarena_patcher = None
@@ -55,13 +73,13 @@ class Project(object):
 #        self.gecko_gct_files.append(filepath)
     
     def add_branch(self, addr, funcname, LK=False):
-        self.branches.append((addr, funcname, LK))
+        self.hooks.append(BranchHook(addr, funcname, LK))
     
     def add_branchlink(self, addr, funcname):
         self.add_branch(addr, funcname, LK=True)
     
     def add_pointer(self, addr, funcname):
-        self.pointers.append((addr, funcname))
+        self.hooks.append(PointerHook(addr, funcname))
     
     def set_osarena_patcher(self, function):
         self.osarena_patcher = function
@@ -94,23 +112,17 @@ class Project(object):
             dol.seek(sectionaddr)
             dol.write(data)
             
-            for addr, sym_name, lk_bit in self.branches:
-                if sym_name not in self.symbols:
-                    print("Undefined Symbol: {0}.  Skipping...".format(sym_name))
-                    continue
+            for hook in self.hooks:
+                if hook.sym_name in self.symbols:
+                    hook.good = True
+                    dol.seek(hook.addr)
+                    if type(hook) == BranchHook:
+                        write_branch(dol, self.symbols[hook.sym_name]['st_value'], LK=hook.lk_bit)
+                    elif type(hook) == PointerHook:
+                        write_uint32(dol, self.symbols[hook.sym_name]['st_value'])
                 if self.verbose:
-                    print("Branch{0:s} @ {1:08X} to {2:s}".format("link" if lk_bit else "", addr, sym_name))
-                dol.seek(addr)
-                write_branch(dol, self.symbols[sym_name], LK=lk_bit)
-            
-            for addr, sym_name in self.pointers:
-                if sym_name not in self.symbols:
-                    print("Undefined Symbol: {0}.  Skipping...".format(sym_name))
-                    continue
-                if self.verbose:
-                    print("Pointer @ {0:08x} to {1:s}".format(addr, sym_name))
-                dol.seek(addr)
-                write_uint32(dol, self.symbols[sym_name])
+                    print("{:s} {:08X} {:s} {:s}".format(
+                        "{:13s}".format("["+hook.kind+"]"), hook.addr, "-->" if hook.good else "-X>", hook.sym_name))
             
             self.osarena_patcher(dol, self.base_addr + len(data))
         
@@ -138,23 +150,54 @@ class Project(object):
                     word2 = struct.unpack_from(">I", data, i+4)[0]
                     f.write("{:08X} {:08X}\n".format(word1, word2))
             
-            f.write("$Branches\n")
-            for addr, sym_name, lk_bit in self.branches:
-                if sym_name not in self.symbols:
-                    print("Undefined Symbol: {0}.  Skipping...".format(sym_name))
-                    continue
+            f.write("$Hooks\n")
+            for hook in self.hooks:
+                if hook.sym_name in self.symbols:
+                    hook.good = True
+                    if type(hook) == BranchHook:
+                        f.write(gecko_C6write(hook.addr, self.symbols[hook.sym_name]['st_value'], hook.lk_bit) + "\n")
+                    elif type(hook) == PointerHook:
+                        f.write(gecko_04write(hook.addr, self.symbols[hook.sym_name]['st_value']) + "\n")
                 if self.verbose:
-                    print("Branch{0:s} @ {1:08X} to {2:s}".format("link" if lk_bit else "", addr, sym_name))
-                f.write(gecko_C6write(addr, self.symbols[sym_name], lk_bit) + "\n")
+                    print("{:s} {:08X} {:s} {:s}".format(
+                        "{:13s}".format("["+hook.kind+"]"), hook.addr, "-->" if hook.good else "-X>", hook.sym_name))
+    
+    def save_map(self, map_path, write_hooks=False):
+        with open(map_path, "w") as map:
+            if write_hooks == True:
+                for hook in self.hooks:
+                    map.write("{:s} {:08X} {:s} {:s}\n".format(
+                        "{:13s}".format("["+hook.kind+"]"), hook.addr, "-->" if hook.good else "-X>", hook.sym_name))
             
-            f.write("$Pointers\n")
-            for addr, sym_name in self.pointers:
-                if sym_name not in self.symbols:
-                    print("Undefined Symbol: {0}.  Skipping...".format(sym_name))
-                    continue
-                if self.verbose:
-                    print("Pointer @ {0:08X} to {1:s}".format(addr, sym_name))
-                f.write(gecko_04write(addr, self.symbols[sym_name]) + "\n")
+            with open(self.obj_dir+self.project_name+".o", 'rb') as f:
+                elf = ELFFile(f)
+                symtab = elf.get_section_by_name(".symtab")
+                new_symbols = []
+                
+                for iter in symtab.iter_symbols():
+                    # Filter out worthless symbols, as well as STT_SECTION and STT_FILE type symbols.
+                    if iter.entry['st_info']['bind'] == "STB_LOCAL":
+                        continue
+                    # Symbols defined by the linker script have no section index, and are instead absolute.
+                    # Symbols we already have aren't needed in the new symbol map, so they are filtered out.
+                    if (iter.entry['st_shndx'] == 'SHN_ABS') or (iter.entry['st_shndx'] == 'SHN_UNDEF'):
+                        continue
+                    new_symbols.append(iter)
+                new_symbols.sort(key = lambda i: i.entry['st_value'])
+                
+                curr_section_name = ""
+                for iter in new_symbols:
+                    parent_section = elf.get_section(iter.entry['st_shndx'])
+                    if curr_section_name != parent_section.name:
+                        curr_section_name = parent_section.name
+                        map.write(
+                            "\n"
+                            "{} section layout\n"
+                            "  Starting        Virtual\n"
+                            "  address  Size   address\n"
+                            "  -----------------------\n".format(curr_section_name))
+                    map.write("  {:08X} {:06X} {:08X}  0 {}\n".format(
+                        iter.entry['st_value'] - self.base_addr, iter.entry['st_size'], iter.entry['st_value'], iter.name))
     
     def cleanup(self):
         if self.is_built == True:
@@ -176,6 +219,7 @@ class Project(object):
         args.append("-std="+self.c_std)
         args.append("-w")
         args.extend(("-I", self.src_dir))
+        args.append("-fno-asynchronous-unwind-tables")
         if self.verbose:
             print(args)
         subprocess.call(args)
@@ -214,41 +258,22 @@ class Project(object):
             print(args)
         subprocess.call(args)
     
-    def __objdump_project(self):
-        args = [self.devkitppc_path+"powerpc-eabi-objdump", self.obj_dir+self.project_name+".o", "--full-content"]
-        if self.verbose:
-            print(args)
-        subprocess.call(args)
-    
-    def __objcopy_project(self):
-        arg = [self.devkitppc_path+"powerpc-eabi-objcopy"]
-        arg.append(self.obj_dir+self.project_name+".o")
-        arg.append(self.obj_dir+self.project_name+".bin")
-        arg.extend(("-O", "binary"))
-        arg.append("-S")
-        arg.extend(("-R", ".eh_frame"))
-        arg.extend(("-R", ".comment"))
-        arg.extend(("-R", ".gnu.attributes"))
-        if self.verbose:
-            print(arg)
-        subprocess.call(arg)
-    
-    def __read_map(self):
-        with open(self.obj_dir+self.project_name+".map", "r") as f:
-            for next in f:
-                if len(next) < 50:
+    def __process_project(self):
+        with open(self.obj_dir+self.project_name+".o", 'rb') as f:
+            elf = ELFFile(f)
+            with open(self.obj_dir+self.project_name+".bin", "wb") as bin:
+                for iter in elf.iter_sections():
+                    # Filter out sections without SHF_ALLOC attribute
+                    if iter.header["sh_flags"] & 0x2:
+                        bin.seek(iter.header["sh_addr"] - self.base_addr)
+                        bin.write(iter.data())
+            
+            symtab = elf.get_section_by_name(".symtab")
+            for iter in symtab.iter_symbols():
+                # Filter out worthless symbols, as well as STT_SECTION and STT_FILE type symbols.
+                if iter.entry['st_info']['bind'] == "STB_LOCAL":
                     continue
-                if next[34:50] != "                ":
-                    continue
-                
-                vals = next.strip().split(" ")
-                for i in range(vals.count("")):
-                    vals.remove("")
-                
-                addr = vals[0]
-                func = vals[1]
-                
-                self.symbols[func] = int(addr, 16)
+                self.symbols[iter.name] = iter.entry
     
     def __build_project(self):
         os.makedirs(self.src_dir, exist_ok=True)
@@ -264,15 +289,7 @@ class Project(object):
         
         if self.is_built == True:
             self.__link_project()
-            self.__read_map()
-            self.__objcopy_project()
-            
-            if self.verbose:
-                self.__objdump_project()
-                print("")
-                for key, val in self.symbols.items():
-                    print("{0:x} {1:s}".format(val, key))
-                print("")
+            self.__process_project()
     
     def __apply_gecko(self, dol):
         for file in self.gecko_txt_files:
