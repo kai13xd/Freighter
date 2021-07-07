@@ -2,10 +2,11 @@ import subprocess
 import os
 import platform
 import struct
-from dol_c_kit import DolFile, write_uint32
 from dol_c_kit import assemble_branch, write_branch, apply_gecko
 from dol_c_kit import gecko_04write, gecko_C6write
 
+from dolreader.dol import DolFile, write_uint32
+from dolreader.section import TextSection, DataSection
 from elftools.elf.elffile import ELFFile
 
 class Hook(object):
@@ -25,6 +26,13 @@ class PointerHook(Hook):
     def __init__(self, addr, sym_name):
         Hook.__init__(self, addr, sym_name)
         self.kind = "Pointer"
+
+def find_rom_end(dol):
+    rom_end = 0x80000000
+    for offset, address, size in dol.sections:
+        if address + size > rom_end:
+            rom_end = address + size
+    return rom_end
 
 class Project(object):
     def __init__(self, base_addr=None, verbose=False):
@@ -89,7 +97,7 @@ class Project(object):
             dol = DolFile(f)
         
         if self.base_addr == None:
-            self.base_addr = (dol.find_rom_end() + 31) & 0xFFFFFFE0
+            self.base_addr = (find_rom_end(dol) + 31) & 0xFFFFFFE0
             print("Base address auto-set from ROM end: {0:X}\n"
                   "Do not rely on this feature if your DOL uses .sbss2\n".format(self.base_addr))
         
@@ -102,15 +110,14 @@ class Project(object):
             with open(self.obj_dir+self.project_name+".bin", "rb") as f:
                 data = f.read()
             
-            if dol.is_text_section_available():
-                offset, sectionaddr, size = dol.allocate_text_section(len(data), addr=self.base_addr)
-            elif dol.is_data_section_available():
-                offset, sectionaddr, size = dol.allocate_data_section(len(data), addr=self.base_addr)
+            new_section = None
+            if len(dol.textSections) <= DolFile.MaxTextSections:
+                new_section = TextSection(self.base_addr, data)
+            elif len(dol.dataSections) <= DolFile.MaxDataSections:
+                new_section = DataSection(self.base_addr, data)
             else:
                 raise RuntimeError("DOL is full!  Cannot allocate any new sections.")
-            
-            dol.seek(sectionaddr)
-            dol.write(data)
+            dol.append_section(new_section)
             
             for hook in self.hooks:
                 if hook.sym_name in self.symbols:

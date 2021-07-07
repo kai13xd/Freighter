@@ -1,10 +1,3 @@
-from dol_c_kit.dolreader import read_ubyte
-from dol_c_kit.dolreader import read_uint32
-from dol_c_kit.dolreader import write_uint32
-from dol_c_kit.dolreader import UnmappedAddress
-from dol_c_kit.dolreader import SectionCountFull
-from dol_c_kit.dolreader import DolFile
-
 from dol_c_kit.doltools import assemble_branch
 from dol_c_kit.doltools import assemble_integer_arithmetic_immediate
 from dol_c_kit.doltools import assemble_integer_logical_immediate

@@ -1,5 +1,5 @@
 # What is DOL C-Kit?
-DOL C-Kit is a toolkit for compiling C code (or assembly) using DevkitPPC to inject into a GameCube/Wii \*.dol executable.  It has been written in such a way that it can be adapted to many different games.  You will need [Python 3](https://www.python.org/downloads/), [pyelftools](https://github.com/eliben/pyelftools), and [DevKitPPC](https://devkitpro.org/wiki/Getting_Started) installed to use it.
+DOL C-Kit is a toolkit for compiling C code (or assembly) using DevkitPPC to inject into a GameCube/Wii \*.dol executable.  It has been written in such a way that it can be adapted to many different games.  ou will need [Python 3](https://www.python.org/downloads/), [pyelftools](https://github.com/eliben/pyelftools), JoshuaMK's fork of [dolreader](https://github.com/JoshuaMKW/dolreader), and [DevKitPPC](https://devkitpro.org/wiki/Getting_Started) installed to use it.
 
 Credit to Yoshi2 for creating the original GC C-Kit.  DOL C-Kit couldn't exist without it.
 
