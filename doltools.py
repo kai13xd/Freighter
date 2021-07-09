@@ -1,8 +1,4 @@
-from struct import pack 
-from math import ceil 
-from binascii import unhexlify
-
-from dol_c_kit import write_uint32
+import struct
 
 def mask_field(val, bits, signed):
     if signed == True:
@@ -31,7 +27,7 @@ def assemble_branch(addr, target_addr, LK=False, AA=False):
     out |= (AA << 1)
     out |= (LI << 2)
     out |= (18 << 26)
-    return out
+    return struct.pack(">I", out)
 
 def assemble_integer_arithmetic_immediate(opcd, rD, rA, SIMM):
     out = 0
@@ -44,7 +40,7 @@ def assemble_integer_arithmetic_immediate(opcd, rD, rA, SIMM):
     out |= (rA << 16)
     out |= (rD << 21)
     out |= (opcd << 26)
-    return out
+    return struct.pack(">I", out)
 
 def assemble_integer_logical_immediate(opcd, rA, rS, UIMM):
     out = 0
@@ -57,7 +53,7 @@ def assemble_integer_logical_immediate(opcd, rA, rS, UIMM):
     out |= (rA << 16)
     out |= (rS << 21)
     out |= (opcd << 26)
-    return out
+    return struct.pack(">I", out)
 
 # Assemble an instruction
 def assemble_addi(rD, rA, SIMM):
@@ -78,88 +74,19 @@ def assemble_nop():
     
 # Write instructions to DOL
 def write_branch(dol, target_addr, LK=False, AA=False):
-    write_uint32(dol, assemble_branch(dol.tell(), target_addr, LK, AA))
+    dol.write(assemble_branch(dol.tell(), target_addr, LK, AA))
 def write_addi(dol, rD, rA, SIMM):
-    write_uint32(dol, assemble_addi(rD, rA, SIMM))
+    dol.write(assemble_addi(rD, rA, SIMM))
 def write_addis(dol, rD, rA, SIMM):
-    write_uint32(dol, assemble_addis(rD, rA, SIMM))
+    dol.write(assemble_addis(rD, rA, SIMM))
 def write_ori(dol, rA, rS, UIMM):
-    write_uint32(dol, assemble_ori(rA, rS, UIMM))
+    dol.write(assemble_ori(rA, rS, UIMM))
 def write_oris(dol, rA, rS, UIMM):
-    write_uint32(dol, assemble_oris(rA, rS, UIMM))
+    dol.write(assemble_oris(rA, rS, UIMM))
 # Simplified mnenonics
 def write_li(dol, rD, SIMM):
-    write_uint32(dol, assemble_li(rD, SIMM))
+    dol.write(assemble_li(rD, SIMM))
 def write_lis(dol, rD, SIMM):
-    write_uint32(dol, assemble_lis(rD, SIMM))
+    dol.write(assemble_lis(rD, SIMM))
 def write_nop(dol):
-    write_uint32(dol, assemble_nop())
-
-
-def _read_line(line):
-    line = line.strip()
-    vals = line.split(" ")
-    for i in range(vals.count("")):
-        vals.remove("")
-    
-    val1 = int(vals[0], 16)
-    val2 = int(vals[1], 16)
-    
-    return val1, val2
-
-def apply_gecko(dol, f):
-    while True:
-        line = f.readline()
-        if line == "":
-            break 
-        if line.strip() == "" or line.startswith("$") or line.startswith("*"):
-            continue 
-        
-        val1, val2 = _read_line(line)
-        
-        codetype = val1 >> 24
-        addr = 0x80000000 + (val1 & 0xFFFFFF)
-        
-        hi = codetype & 0b1
-        if hi:
-            addr += 0x01000000
-            
-        
-        if codetype == 0x00:
-            amount = (val2 >> 16) + 1 
-            value = val2 & 0xFF
-            
-            dol.seek(addr)
-            for i in range(amount):
-                dol.write(pack("B", value))
-                
-        elif codetype == 0x02:
-            amount = (val2 >> 8) + 1 
-            value = val2 & 0xFFFF
-            
-            dol.seek(addr)
-            for i in range(amount):
-                dol.write(pack(">H", value))
-                
-        elif codetype == 0x04: 
-            dol.seek(addr)
-            dol.write(pack(">I", val2))
-        
-        elif codetype == 0x06:
-            bytecount = val2 
-            dol.seek(addr)
-            for i in range(int(ceil(bytecount/8.0))):
-                datalen = bytecount % 8
-                line = f.readline().strip()
-                assert line != ""
-                vals = line.split(" ")
-                for j in range(vals.count("")):
-                    vals.remove("")
-                data = "".join(vals)
-                
-                dol.write(unhexlify(data)[:datalen])
-                bytecount -= 8 
-        
-        elif codetype == 0xC6:
-            dol.seek(addr)
-            write_branch(dol, val2, LK=False)
+    dol.write(assemble_nop())

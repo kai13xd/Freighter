@@ -1,5 +1,5 @@
 # What is DOL C-Kit?
-DOL C-Kit is a toolkit for compiling C code (or assembly) using DevkitPPC to inject into a GameCube/Wii \*.dol executable.  It has been written in such a way that it can be adapted to many different games.  ou will need [Python 3](https://www.python.org/downloads/), [pyelftools](https://github.com/eliben/pyelftools), JoshuaMK's fork of [dolreader](https://github.com/JoshuaMKW/dolreader), and [DevKitPPC](https://devkitpro.org/wiki/Getting_Started) installed to use it.
+DOL C-Kit is a toolkit for compiling C code (or assembly) using DevkitPPC to inject into a GameCube/Wii \*.dol executable.  It has been written in such a way that it can be adapted to many different games.  You will need [Python 3](https://www.python.org/downloads/), [pyelftools](https://github.com/eliben/pyelftools), JoshuaMK's fork of [dolreader](https://github.com/JoshuaMKW/dolreader), [geckocode-libs](https://github.com/JoshuaMKW/geckocode-libs), and [DevKitPPC](https://devkitpro.org/wiki/Getting_Started) installed to use it.
 
 Credit to Yoshi2 for creating the original GC C-Kit.  DOL C-Kit couldn't exist without it.
 
@@ -31,7 +31,10 @@ Add an assembly source file to the project.
 Add a [linker script file](https://ftp.gnu.org/old-gnu/Manuals/ld-2.9.1/html_chapter/ld_3.html) to the project.  This is useful for defining symbols.
 
 * `add_gecko_txt_file(filepath)`<br>
-Add a [Gecko codelist](http://codes.rc24.xyz/) to the project.  The effects of the codes will be patched to the DOL permanently.  Only 00, 02, 04, 06, and C6 codetypes are supported for now.
+Add a textual [Gecko Code List](http://codes.rc24.xyz/) to the project.  When build_dol is used, codetypes 00, 02, 04, 06, 08, C6, C2, and F2 are permanently patched into the DOL.  When build_gecko is used, all given Gecko Codes are copied into a new Gecko Code List.
+
+* `add_gecko_gct_file(filepath)`<br>
+Add a binary [Gecko Code Table](http://codes.rc24.xyz/) to the project.  When build_dol is used, codetypes 00, 02, 04, 06, 08, C6, C2, and F2 are permanently patched into the DOL.  When build_gecko is used, all given Gecko Codes are copied into a new Gecko Code List.
 
 * `add_branch(addr, funcname, LK=False)`<br>
 Declare a branch to a symbol to be written at a given address.  Optionally, pass LK=True to declare a branchlink.
@@ -47,14 +50,14 @@ Give your project a game-specific patching function to use to allocate space for
 
 ## Step 2: Build the project
 * `build_dol(in_dol_path, out_dol_path)`<br>
-Compile, assemble, and link all source files into a single binary file.  Save changes to a \*.dol executable.  If no base_addr is specified, the ROM end will automatically be detected and used.  A new text section will be allocated to contain the new data.  If no text sections are available, a data section will be allocated instead.<br>
+Compile, assemble, and link all source files, hooks, and supported Gecko Codes into a \*.dol executable.  If no base_addr is specified, the ROM end will automatically be detected and used.  A new text section will be allocated to contain the new data.  If no text sections are available, a data section will be allocated instead.<br>
 Note: Automatic ROM end detection does not work for DOLs that allocate space for .sbss2.
 
 * `build_gecko(gecko_path)`<br>
-!! This feature is a WIP !!  Compile, assemble, and link all source files into a single binary file.  Save changes to a large Gecko codelist.  OSArenaLo patchers are not used, and likely never will be worth implementing be due to timing limitations of Gecko codes.  Instead, existing data must be overwritten.  At the moment, Gecko codes included by the add_gecko_txt_file function are discared.
+Compile, assemble, and link all source files, hooks, and Gecko Codes into a large Gecko Code List.  OSArenaLo patchers are not used, and likely never will be worth implementing be due to timing limitations of Gecko Codes.  Instead, existing data must be overwritten.
 
-* `save_map(map_path, write_hooks=False)`<br>
-Generate a CodeWarrior-like symbol map from the project.  Run this after building and before cleanup.  The write_hooks parameter can be enabled to print branch, branchlink, and pointer hook information to the Symbol Map in a way which Dolphin Emulator ignores.
+* `save_map(map_path)`<br>
+Generate a CodeWarrior-like symbol map from the project.  Run this after building but before cleanup.
 
 * `cleanup()`<br>
 Delete unimportant files created by DOL C-Kit.  This includes unlinked \*.o files, and <project_name>.o, <project_name>.bin, and <project_name>.map.

@@ -1,13 +1,13 @@
 import subprocess
 import os
 import platform
-import struct
-from dol_c_kit import assemble_branch, write_branch, apply_gecko
-from dol_c_kit import gecko_04write, gecko_C6write
+from dol_c_kit import assemble_branch, write_branch
 
 from dolreader.dol import DolFile, write_uint32
-from dolreader.section import TextSection, DataSection
+from dolreader.section import Section, TextSection, DataSection
 from elftools.elf.elffile import ELFFile
+from geckolibs.gct import GeckoCodeTable
+from geckolibs.geckocode import GeckoCode, GeckoCommand, WriteBranch, Write32, WriteString
 
 class Hook(object):
     def __init__(self, addr, sym_name):
@@ -34,9 +34,26 @@ def find_rom_end(dol):
             rom_end = address + size
     return rom_end
 
+def try_remove(filepath):
+    try:
+        os.remove(filepath)
+        return True
+    except FileNotFoundError:
+        return False
+
+SupportedGeckoCodetypes = [
+    GeckoCommand.Type.WRITE_8,
+    GeckoCommand.Type.WRITE_16,
+    GeckoCommand.Type.WRITE_32,
+    GeckoCommand.Type.WRITE_STR,
+    GeckoCommand.Type.WRITE_SERIAL,
+    GeckoCommand.Type.WRITE_BRANCH,
+    GeckoCommand.Type.ASM_INSERT,
+    GeckoCommand.Type.ASM_INSERT_XOR,
+]
+
 class Project(object):
     def __init__(self, base_addr=None, verbose=False):
-        self.is_built = False
         self.base_addr = base_addr
         
         # System member variables
@@ -60,8 +77,8 @@ class Project(object):
         
         # Patches member variables
         self.hooks = []
-        self.gecko_txt_files = []
-        self.gecko_gct_files = []
+        self.gecko_codetable = GeckoCodeTable(gameName=self.project_name)
+        self.gecko_code_metadata = []
         self.osarena_patcher = None
         
         
@@ -75,10 +92,15 @@ class Project(object):
         self.linker_script_files.append(filepath)
     
     def add_gecko_txt_file(self, filepath):
-        self.gecko_txt_files.append(filepath)
+        with open(filepath, "r") as f:
+            gecko_codetable = GeckoCodeTable.from_text(f)
+        for gecko_code in gecko_codetable:
+            self.gecko_codetable.add_child(gecko_code)
     
-#    def add_gecko_gct_file(self, filepath):
-#        self.gecko_gct_files.append(filepath)
+    def add_gecko_gct_file(self, filepath):
+        with open(filepath, "rb") as f:
+            code_table = GeckoCodeTable.from_bytes(f)
+        self.gecko_codetable.append(code_table)
     
     def add_branch(self, addr, funcname, LK=False):
         self.hooks.append(BranchHook(addr, funcname, LK))
@@ -104,78 +126,115 @@ class Project(object):
         if self.base_addr % 32:
             print("WARNING!  DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
         
-        self.__build_project()
-        
-        if self.is_built == True:
+        data = bytearray()
+
+        if self.__build_project() == True:
             with open(self.obj_dir+self.project_name+".bin", "rb") as f:
-                data = f.read()
-            
-            new_section = None
-            if len(dol.textSections) <= DolFile.MaxTextSections:
-                new_section = TextSection(self.base_addr, data)
-            elif len(dol.dataSections) <= DolFile.MaxDataSections:
-                new_section = DataSection(self.base_addr, data)
-            else:
-                raise RuntimeError("DOL is full!  Cannot allocate any new sections.")
-            dol.append_section(new_section)
-            
-            for hook in self.hooks:
-                if hook.sym_name in self.symbols:
-                    hook.good = True
-                    dol.seek(hook.addr)
-                    if type(hook) == BranchHook:
-                        write_branch(dol, self.symbols[hook.sym_name]['st_value'], LK=hook.lk_bit)
-                    elif type(hook) == PointerHook:
-                        write_uint32(dol, self.symbols[hook.sym_name]['st_value'])
-                if self.verbose:
-                    print("{:s} {:08X} {:s} {:s}".format(
-                        "{:13s}".format("["+hook.kind+"]"), hook.addr, "-->" if hook.good else "-X>", hook.sym_name))
-            
-            self.osarena_patcher(dol, self.base_addr + len(data))
+                data += f.read()
+                while (len(data) % 4) != 0:
+                    data += b'\x00'
         
-        self.__apply_gecko(dol)
+        for gecko_code in self.gecko_codetable:
+            status = "ENABLED" if gecko_code.is_enabled() else "DISABLED"
+            if gecko_code.is_enabled() == True:
+                for gecko_command in gecko_code:
+                    if gecko_command.codetype not in SupportedGeckoCodetypes:
+                        status = "OMITTED"
+            
+            print("[GeckoCode]   {:12s} ${}".format(status, gecko_code.name))
+            if status == "OMITTED":
+                print("Includes unsupported codetypes:")
+                for gecko_command in gecko_code:
+                    if gecko_command.codetype not in SupportedGeckoCodetypes:
+                        print(gecko_command)
+            
+            vaddress = self.base_addr + len(data)
+            geckoblob = bytearray()
+            gecko_command_metadata = []
+            
+            for gecko_command in gecko_code:
+                if gecko_command.codetype == GeckoCommand.Type.ASM_INSERT \
+                or gecko_command.codetype == GeckoCommand.Type.ASM_INSERT_XOR:
+                    if status == "UNUSED" \
+                    or status == "OMITTED":
+                        gecko_command_metadata.append((0, len(gecko_command.value), status, gecko_command))
+                    else:
+                        dol.seek(gecko_command._address | 0x80000000)
+                        write_branch(dol, vaddress + len(geckoblob))
+                        gecko_command_metadata.append((vaddress + len(geckoblob), len(gecko_command.value), status, gecko_command))
+                        geckoblob += gecko_command.value[:-4]
+                        geckoblob += assemble_branch(vaddress + len(geckoblob), gecko_command._address + 4 | 0x80000000)
+            data += geckoblob
+            if gecko_command_metadata:
+                self.gecko_code_metadata.append((vaddress, len(geckoblob), status, gecko_code, gecko_command_metadata))
+        self.gecko_codetable.apply(dol)
+        
+        for hook in self.hooks:
+            if hook.sym_name in self.symbols:
+                hook.good = True
+                dol.seek(hook.addr)
+                if type(hook) == BranchHook:
+                    write_branch(dol, self.symbols[hook.sym_name]['st_value'], LK=hook.lk_bit)
+                elif type(hook) == PointerHook:
+                    write_uint32(dol, self.symbols[hook.sym_name]['st_value'])
+            if self.verbose:
+                print("{:s} {:08X} {:s} {:s}".format(
+                      "{:13s}".format("["+hook.kind+"]"), hook.addr, "-->" if hook.good else "-X>", hook.sym_name))
+        
+        new_section: Section
+        if len(dol.textSections) <= DolFile.MaxTextSections:
+            new_section = TextSection(self.base_addr, data)
+        elif len(dol.dataSections) <= DolFile.MaxDataSections:
+            new_section = DataSection(self.base_addr, data)
+        else:
+            raise RuntimeError("DOL is full!  Cannot allocate any new sections.")
+        dol.append_section(new_section)
+        
+        self.osarena_patcher(dol, self.base_addr + len(data))
         
         with open(out_dol_path, "wb") as f:
             dol.save(f)
     
     def build_gecko(self, gecko_path):
-        self.__build_project()
-        
         with open(gecko_path, "w") as f:
-            if self.is_built == True:
+            if self.__build_project() == True:
                 with open(self.obj_dir+self.project_name+".bin", "rb") as bin:
                     data = bin.read()
-                # Pad new data to next multiple of 8 for the Gecko Codehandler
-                len_real = len(data)
-                while (len(data) % 8) != 0:
-                    data += b'\x00'
             
-                f.write("$Program Code\n")
-                f.write("{:08X} {:08X}\n".format((self.base_addr & 0x01FFFFFC) | 0x06000000, len_real))
-                for i in range(0, len(data), 8):
-                    word1 = struct.unpack_from(">I", data, i  )[0]
-                    word2 = struct.unpack_from(">I", data, i+4)[0]
-                    f.write("{:08X} {:08X}\n".format(word1, word2))
-            
+            f.write("[Gecko]\n")
+            # Copy existing Gecko Codes
+            for gecko_code in self.gecko_codetable:
+                f.write("${}\n".format(gecko_code.name))
+                f.write("{}\n".format(gecko_code.as_text()))
+                print("[GeckoCode]   {:12s} ${}".format("ENABLED" if gecko_code.is_enabled() else "DISABLED", gecko_code.name))
+            # Create Program Data megacode
+            if data:
+                gecko_command = WriteString(data, self.base_addr)
+                f.write("$Program Data\n")
+                f.write(gecko_command.as_text() + "\n")
+            # Create Hooks
             f.write("$Hooks\n")
             for hook in self.hooks:
                 if hook.sym_name in self.symbols:
                     hook.good = True
                     if type(hook) == BranchHook:
-                        f.write(gecko_C6write(hook.addr, self.symbols[hook.sym_name]['st_value'], hook.lk_bit) + "\n")
+                        gecko_command = WriteBranch(self.symbols[hook.sym_name]['st_value'], hook.addr, isLink = hook.lk_bit)
+                        f.write(gecko_command.as_text() + "\n")
                     elif type(hook) == PointerHook:
-                        f.write(gecko_04write(hook.addr, self.symbols[hook.sym_name]['st_value']) + "\n")
+                        gecko_command = Write32(self.symbols[hook.sym_name]['st_value'], hook.addr)
+                        f.write(gecko_command.as_text() + "\n")
                 if self.verbose:
                     print("{:s} {:08X} {:s} {:s}".format(
-                        "{:13s}".format("["+hook.kind+"]"), hook.addr, "-->" if hook.good else "-X>", hook.sym_name))
+                          "{:13s}".format("["+hook.kind+"]"), hook.addr, "-->" if hook.good else "-X>", hook.sym_name))
+            # Say they are all enabled
+            f.write("[Gecko_Enabled]\n")
+            for gecko_code in self.gecko_codetable:
+                f.write("${}\n".format(gecko_code.name))
+            f.write("$Program Data\n")
+            f.write("$Hooks\n")
     
-    def save_map(self, map_path, write_hooks=False):
+    def save_map(self, map_path):
         with open(map_path, "w") as map:
-            if write_hooks == True:
-                for hook in self.hooks:
-                    map.write("{:s} {:08X} {:s} {:s}\n".format(
-                        "{:13s}".format("["+hook.kind+"]"), hook.addr, "-->" if hook.good else "-X>", hook.sym_name))
-            
             with open(self.obj_dir+self.project_name+".o", 'rb') as f:
                 elf = ELFFile(f)
                 symtab = elf.get_section_by_name(".symtab")
@@ -205,17 +264,46 @@ class Project(object):
                             "  -----------------------\n".format(curr_section_name))
                     map.write("  {:08X} {:06X} {:08X}  0 {}\n".format(
                         iter.entry['st_value'] - self.base_addr, iter.entry['st_size'], iter.entry['st_value'], iter.name))
+                # Record Geckoblobs from patched-in C2/F2 codetypes.  I really wanted to name this section .gecko in the
+                # symbol map, but only .init and .text section headers tell Dolphin to color the symbols by index.
+                if self.gecko_code_metadata:
+                    map.write(
+                        "\n"
+                        ".text section layout\n"
+                        "  Starting        Virtual\n"
+                        "  address  Size   address\n"
+                        "  -----------------------\n")
+                    for code_vaddr, code_size, code_status, gecko_code, gecko_command_metadata in self.gecko_code_metadata:
+                        i = 0
+                        for cmd_vaddr, cmd_size, cmd_status, gecko_command in gecko_command_metadata:
+                            if gecko_command.codetype == GeckoCommand.Type.ASM_INSERT \
+                            or gecko_command.codetype == GeckoCommand.Type.ASM_INSERT_XOR:
+                                if cmd_status == "OMITTED":
+                                    map.write("  UNUSED   {:06X} ........ {}${}\n".format(
+                                        cmd_size, gecko_code.name, i))
+                                else:
+                                    map.write("  {:08X} {:06X} {:08X}  0 {}${}\n".format(
+                                        cmd_vaddr - self.base_addr, cmd_size, cmd_vaddr, gecko_code.name, i))
+                            i += 1
+                # For whatever reason, the final valid symbol loaded by Dolphin ( <= 5.0-13603 ) gets messed up
+                # and loses its size.  To compensate, an dummy symbol is thrown into the map at a dubious address.
+                map.write(
+                    "\n"
+                    ".dummy section layout\n"
+                    "  Starting        Virtual\n"
+                    "  address  Size   address\n"
+                    "  -----------------------\n"
+                    "  00000000 000000 81200000  0 Workaround for Dolphin's bad symbol map loader\n")
     
     def cleanup(self):
-        if self.is_built == True:
-            for filename in self.obj_files:
-                os.remove(self.obj_dir+filename)
-            os.remove(self.obj_dir+self.project_name+".o")
-            os.remove(self.obj_dir+self.project_name+".bin")
-            os.remove(self.obj_dir+self.project_name+".map")
+        for filename in self.obj_files:
+            try_remove(self.obj_dir+filename)
+        try_remove(self.obj_dir+self.project_name+".o")
+        try_remove(self.obj_dir+self.project_name+".bin")
+        try_remove(self.obj_dir+self.project_name+".map")
         self.obj_files.clear()
         self.symbols.clear()
-        self.is_built = False
+        self.gecko_code_metadata.clear()
     
     def __compile(self, infile):
         args = [self.devkitppc_path+"powerpc-eabi-gcc"]
@@ -231,6 +319,7 @@ class Project(object):
             print(args)
         subprocess.call(args)
         self.obj_files.append(infile+".o")
+        return True
     
     def __assemble(self, infile):
         args = [self.devkitppc_path+"powerpc-eabi-as"]
@@ -242,6 +331,7 @@ class Project(object):
             print(args)
         subprocess.call(args)
         self.obj_files.append(infile+".o")
+        return True
     
     def __link_project(self):
         if self.base_addr == None:
@@ -264,6 +354,7 @@ class Project(object):
         if self.verbose:
             print(args)
         subprocess.call(args)
+        return True
     
     def __process_project(self):
         with open(self.obj_dir+self.project_name+".o", 'rb') as f:
@@ -281,27 +372,24 @@ class Project(object):
                 if iter.entry['st_info']['bind'] == "STB_LOCAL":
                     continue
                 self.symbols[iter.name] = iter.entry
+        return True
     
     def __build_project(self):
         os.makedirs(self.src_dir, exist_ok=True)
         os.makedirs(self.obj_dir, exist_ok=True)
+        is_built = False
+        is_linked = False
+        is_processed = False
         
         for filepath in self.c_files:
-            self.is_built = True
-            self.__compile(filepath)
+            is_built |= self.__compile(filepath)
         
         for filepath in self.asm_files:
-            self.is_built = True
-            self.__assemble(filepath)
+            is_built |= self.__assemble(filepath)
         
-        if self.is_built == True:
-            self.__link_project()
-            self.__process_project()
-    
-    def __apply_gecko(self, dol):
-        for file in self.gecko_txt_files:
-            with open(file, "r") as f:
-                apply_gecko(dol, f)
-#        for file in self.gecko_gct_files:
-#            with open(file, "r") as f:
-#                something to process GCT files here
+        if is_built == True:
+            is_linked |= self.__link_project()
+        if is_linked == True:
+            is_processed |= self.__process_project()
+        
+        return is_processed
