@@ -45,6 +45,9 @@ Declare a branchlink to a symbol to be written at a given address.
 * `add_pointer(addr, funcname)`<br>
 Declare a pointer to a symbol to be written at a given address.
 
+* `add_string(self, addr, string, encoding = "ascii", max_size = -1)`<br>
+Declare a string to be written at a given address.  Optionally, an encoding and maximum size (in bytes) can be specified.
+
 * `set_osarena_patcher(function)`<br>
 Give your project a game-specific patching function to use to allocate space for new data.
 

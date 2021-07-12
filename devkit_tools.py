@@ -9,23 +9,102 @@ from elftools.elf.elffile import ELFFile
 from geckolibs.gct import GeckoCodeTable
 from geckolibs.geckocode import GeckoCode, GeckoCommand, WriteBranch, Write32, WriteString
 
+
 class Hook(object):
-    def __init__(self, addr, sym_name):
+    def __init__(self, addr):
         self.good = False
-        self.kind = "Hook"
         self.addr = addr
-        self.sym_name = sym_name
+        self.data = None
+    
+    def resolve(self, symbols):
+        return
+    
+    def apply_dol(self, dol):
+        if dol.is_mapped(self.addr):
+            self.good = True
+    
+    def write_geckocommand(self, f):
+        self.good = True
+        
+    def dump_info(self):
+        return "{:s} {:08X}".format(
+               "{:13s}".format("[Hook]       "), self.addr)
 
 class BranchHook(Hook):
     def __init__(self, addr, sym_name, lk_bit):
-        Hook.__init__(self, addr, sym_name)
-        self.kind = "Branchlink" if lk_bit else "Branch"
+        Hook.__init__(self, addr)
+        self.sym_name = sym_name
         self.lk_bit = lk_bit
+    
+    def resolve(self, symbols):
+        if self.sym_name in symbols:
+            self.data = symbols[self.sym_name]['st_value']
+    
+    def apply_dol(self, dol):
+        if self.data and dol.is_mapped(self.addr):
+            dol.seek(self.addr)
+            dol.write(assemble_branch(self.addr, self.data, LK=self.lk_bit))
+            self.good = True
+    
+    def write_geckocommand(self, f):
+        if self.data:
+            gecko_command = WriteBranch(self.data, self.addr, self.lk_bit)
+            f.write(gecko_command.as_text() + "\n")
+            self.good = True
+    
+    def dump_info(self):
+        return "{:s} {:08X} {:s} {:s}".format(
+               "[Branchlink] " if self.lk_bit else "[Branch]     ", self.addr, "-->" if self.good else "-X>", self.sym_name)
 
 class PointerHook(Hook):
     def __init__(self, addr, sym_name):
-        Hook.__init__(self, addr, sym_name)
-        self.kind = "Pointer"
+        Hook.__init__(self, addr)
+        self.sym_name = sym_name
+    
+    def resolve(self, symbols):
+        if self.sym_name in symbols:
+            self.data = symbols[self.sym_name]['st_value']
+    
+    def apply_dol(self, dol):
+        if self.data and dol.is_mapped(self.addr):
+            dol.write_uint32(self.addr, self.data)
+            self.good = True
+    
+    def write_geckocommand(self, f):
+        if self.data:
+            gecko_command = Write32(self.data, self.addr)
+            f.write(gecko_command.as_text() + "\n")
+            self.good = True
+        
+    def dump_info(self):
+        return "{:s} {:08X} {:s} {:s}".format(
+               "[Pointer]    ", self.addr, "-->" if self.good else "-X>", self.sym_name)
+
+class StringHook(Hook):
+    def __init__(self, addr, string, encoding, max_size):
+        Hook.__init__(self, addr)
+        self.data = string.encode(encoding) + b'\x00'
+        if max_size != -1 and len(self.data) > max_size:
+            print("Warning: {:s} exceeds {} bytes!".format(string, max_size))
+        self.string = string
+    
+    def resolve(self, symbols):
+        return
+    
+    def apply_dol(self, dol):
+        if dol.is_mapped(self.addr):
+            dol.seek(self.addr)
+            dol.write(self.data)
+            self.good = True
+    
+    def write_geckocommand(self, f):
+        gecko_command = WriteString(self.data, self.addr)
+        f.write(gecko_command.as_text() + "\n")
+        self.good = True
+        
+    def dump_info(self):
+        return "{:s} {:08X} {:s} \"{:s}\"".format(
+               "[String]     ", self.addr, "-->" if self.good else "-X>", self.string)
 
 def find_rom_end(dol):
     rom_end = 0x80000000
@@ -111,6 +190,9 @@ class Project(object):
     def add_pointer(self, addr, funcname):
         self.hooks.append(PointerHook(addr, funcname))
     
+    def add_string(self, addr, string, encoding = "ascii", max_size = -1):
+        self.hooks.append(StringHook(addr, string, encoding, max_size))
+    
     def set_osarena_patcher(self, function):
         self.osarena_patcher = function
     
@@ -170,16 +252,10 @@ class Project(object):
         self.gecko_codetable.apply(dol)
         
         for hook in self.hooks:
-            if hook.sym_name in self.symbols:
-                hook.good = True
-                dol.seek(hook.addr)
-                if type(hook) == BranchHook:
-                    write_branch(dol, self.symbols[hook.sym_name]['st_value'], LK=hook.lk_bit)
-                elif type(hook) == PointerHook:
-                    write_uint32(dol, self.symbols[hook.sym_name]['st_value'])
+            hook.resolve(self.symbols)
+            hook.apply_dol(dol)
             if self.verbose:
-                print("{:s} {:08X} {:s} {:s}".format(
-                      "{:13s}".format("["+hook.kind+"]"), hook.addr, "-->" if hook.good else "-X>", hook.sym_name))
+                print(hook.dump_info())
         
         new_section: Section
         if len(dol.textSections) <= DolFile.MaxTextSections:
@@ -215,17 +291,10 @@ class Project(object):
             # Create Hooks
             f.write("$Hooks\n")
             for hook in self.hooks:
-                if hook.sym_name in self.symbols:
-                    hook.good = True
-                    if type(hook) == BranchHook:
-                        gecko_command = WriteBranch(self.symbols[hook.sym_name]['st_value'], hook.addr, isLink = hook.lk_bit)
-                        f.write(gecko_command.as_text() + "\n")
-                    elif type(hook) == PointerHook:
-                        gecko_command = Write32(self.symbols[hook.sym_name]['st_value'], hook.addr)
-                        f.write(gecko_command.as_text() + "\n")
+                hook.resolve(self.symbols)
+                hook.write_geckocommand(f)
                 if self.verbose:
-                    print("{:s} {:08X} {:s} {:s}".format(
-                          "{:13s}".format("["+hook.kind+"]"), hook.addr, "-->" if hook.good else "-X>", hook.sym_name))
+                    print(hook.dump_info())
             # Say they are all enabled
             f.write("[Gecko_Enabled]\n")
             for gecko_code in self.gecko_codetable:
