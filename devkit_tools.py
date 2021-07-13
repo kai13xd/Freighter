@@ -48,7 +48,7 @@ class BranchHook(Hook):
     
     def write_geckocommand(self, f):
         if self.data:
-            gecko_command = WriteBranch(self.data, self.addr, self.lk_bit)
+            gecko_command = WriteBranch(self.data, self.addr, isLink = self.lk_bit)
             f.write(gecko_command.as_text() + "\n")
             self.good = True
     
