@@ -1,10 +1,10 @@
 # What is DOL C-Kit?
-DOL C-Kit is a toolkit for compiling C code (or assembly) using DevkitPPC to inject into a GameCube/Wii \*.dol executable.  It has been written in such a way that it can be adapted to many different games.  You will need [Python 3](https://www.python.org/downloads/), [pyelftools](https://github.com/eliben/pyelftools), JoshuaMK's fork of [dolreader](https://github.com/JoshuaMKW/dolreader), [geckocode-libs](https://github.com/JoshuaMKW/geckocode-libs), and [DevKitPPC](https://devkitpro.org/wiki/Getting_Started) installed to use it.
+DOL C-Kit is a toolkit for compiling C code (or assembly) using DevkitPPC to inject into a GameCube/Wii \*.dol executable.  It has been written in such a way that it can be adapted to many different games.  You will need [Python 3](https://www.python.org/downloads/) and [DevKitPPC](https://devkitpro.org/wiki/Getting_Started) installed to use it.  As well, DOL C-Kit is dependent on [pyelftools](https://github.com/eliben/pyelftools), JoshuaMK's fork of [dolreader](https://github.com/JoshuaMKW/dolreader), and [geckocode-libs](https://github.com/JoshuaMKW/geckocode-libs).
 
 Credit to Yoshi2 for creating the original GC C-Kit.  DOL C-Kit couldn't exist without it.
 
 # How to use it / The Project Class
-DOL C-Kit is a Python module.  The recommended way to include it in your project is as a git submodule.
+DOL C-Kit is a Python module.  Run INSTALL.bat to install it.
 
 The Project class automates the tedious parts of compiling, linking, and injecting custom code into a \*.dol executable.  The Project class constructor has two optional parameters to set the "base_addr" and "verbose" member variables.  By default, they are set to None and False, respectively.
 

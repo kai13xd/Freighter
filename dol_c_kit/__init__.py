@@ -1,3 +1,7 @@
+__version__ = "2.0.0"
+__author__ = "Minty Meeo"
+__credits__ = "Yoshi2 (RenolY2)"
+
 from dol_c_kit.doltools import assemble_branch
 from dol_c_kit.doltools import assemble_integer_arithmetic_immediate
 from dol_c_kit.doltools import assemble_integer_logical_immediate
