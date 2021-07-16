@@ -81,15 +81,20 @@ class PointerHook(Hook):
                "[Pointer]    ", self.addr, "-->" if self.good else "-X>", self.sym_name)
 
 class StringHook(Hook):
-    def __init__(self, addr, string, encoding, max_size):
+    def __init__(self, addr, string, encoding, max_strlen):
         Hook.__init__(self, addr)
-        self.data = string.encode(encoding) + b'\x00'
-        if max_size != -1 and len(self.data) > max_size:
-            print("Warning: {:s} exceeds {} bytes!".format(string, max_size))
         self.string = string
+        self.encoding = encoding
+        self.max_strlen = max_strlen
     
     def resolve(self, symbols):
-        return
+        self.data = self.string.encode(self.encoding) + b'\x00'
+        if self.max_strlen != -1:
+            if len(self.data) > self.max_strlen:
+                print("Warning: {:s} exceeds {} bytes!".format(self.string, self.max_strlen))
+            else:
+                while len(self.data) < self.max_strlen:
+                    self.data += b'\x00'
     
     def apply_dol(self, dol):
         if dol.is_mapped(self.addr):
@@ -108,9 +113,9 @@ class StringHook(Hook):
 
 def find_rom_end(dol):
     rom_end = 0x80000000
-    for offset, address, size in dol.sections:
-        if address + size > rom_end:
-            rom_end = address + size
+    for section in dol.sections:
+        if section.address + section.size > rom_end:
+            rom_end = section.address + section.size
     return rom_end
 
 def try_remove(filepath):
@@ -190,8 +195,8 @@ class Project(object):
     def add_pointer(self, addr, funcname):
         self.hooks.append(PointerHook(addr, funcname))
     
-    def add_string(self, addr, string, encoding = "ascii", max_size = -1):
-        self.hooks.append(StringHook(addr, string, encoding, max_size))
+    def add_string(self, addr, string, encoding = "ascii", max_strlen = -1):
+        self.hooks.append(StringHook(addr, string, encoding, max_strlen))
     
     def set_osarena_patcher(self, function):
         self.osarena_patcher = function
@@ -257,25 +262,29 @@ class Project(object):
             if self.verbose:
                 print(hook.dump_info())
         
-        new_section: Section
-        if len(dol.textSections) <= DolFile.MaxTextSections:
-            new_section = TextSection(self.base_addr, data)
-        elif len(dol.dataSections) <= DolFile.MaxDataSections:
-            new_section = DataSection(self.base_addr, data)
-        else:
-            raise RuntimeError("DOL is full!  Cannot allocate any new sections.")
-        dol.append_section(new_section)
-        
-        self.osarena_patcher(dol, self.base_addr + len(data))
+        if len(data) > 0:
+            new_section: Section
+            if len(dol.textSections) <= DolFile.MaxTextSections:
+                new_section = TextSection(self.base_addr, data)
+            elif len(dol.dataSections) <= DolFile.MaxDataSections:
+                new_section = DataSection(self.base_addr, data)
+            else:
+                raise RuntimeError("DOL is full!  Cannot allocate any new sections.")
+            dol.append_section(new_section)
+            
+            if self.osarena_patcher:
+                self.osarena_patcher(dol, self.base_addr + len(data))
         
         with open(out_dol_path, "wb") as f:
             dol.save(f)
     
     def build_gecko(self, gecko_path):
         with open(gecko_path, "w") as f:
+            data = bytearray()
+            
             if self.__build_project() == True:
                 with open(self.obj_dir+self.project_name+".bin", "rb") as bin:
-                    data = bin.read()
+                    data += bin.read()
             
             f.write("[Gecko]\n")
             # Copy existing Gecko Codes
@@ -444,8 +453,8 @@ class Project(object):
         return True
     
     def __build_project(self):
-        os.makedirs(self.src_dir, exist_ok=True)
-        os.makedirs(self.obj_dir, exist_ok=True)
+        os.makedirs("./" + self.src_dir, exist_ok=True)
+        os.makedirs("./" + self.obj_dir, exist_ok=True)
         is_built = False
         is_linked = False
         is_processed = False
