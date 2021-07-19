@@ -154,9 +154,10 @@ class Project(object):
         self.asm_files = []
         self.obj_files = []
         self.linker_script_files = []
+        self.gcc_flags = ["-w", "-std=c99", "-O1", "-fno-asynchronous-unwind-tables",]
+        self.as_flags = ["-w",]
+        self.ld_flags = []
         self.symbols = {}
-        self.optimization = "-O1"
-        self.c_std = "c99"
         self.verbose = verbose
         
         # Patches member variables
@@ -384,15 +385,9 @@ class Project(object):
         self.gecko_code_metadata.clear()
     
     def __compile(self, infile):
-        args = [self.devkitppc_path+"powerpc-eabi-gcc"]
-        args.append(self.src_dir+infile)
-        args.append("-c")
-        args.extend(("-o", self.obj_dir+infile+".o"))
-        args.append(self.optimization)
-        args.append("-std="+self.c_std)
-        args.append("-w")
-        args.extend(("-I", self.src_dir))
-        args.append("-fno-asynchronous-unwind-tables")
+        args = [self.devkitppc_path+"powerpc-eabi-gcc", "-c", self.src_dir+infile, "-o", self.obj_dir+infile+".o", "-I", self.src_dir]
+        for flag in self.gcc_flags:
+            args.append(flag)
         if self.verbose:
             print(args)
         subprocess.call(args)
@@ -400,11 +395,9 @@ class Project(object):
         return True
     
     def __assemble(self, infile):
-        args = [self.devkitppc_path+"powerpc-eabi-as"]
-        args.append(self.src_dir+infile)
-        args.extend(("-o", self.obj_dir+infile+".o"))
-        args.append("-w")
-        args.extend(("-I", self.src_dir))
+        args = [self.devkitppc_path+"powerpc-eabi-as", self.src_dir+infile, "-o", self.obj_dir+infile+".o", "-I", self.src_dir]
+        for flag in self.as_flags:
+            args.append(flag)
         if self.verbose:
             print(args)
         subprocess.call(args)
@@ -415,20 +408,17 @@ class Project(object):
         if self.base_addr == None:
             raise RuntimeError("Base address not set!  New code cannot be linked.")
         
-        args = [self.devkitppc_path+"powerpc-eabi-ld"]
+        args = [self.devkitppc_path+"powerpc-eabi-ld", "-o", self.obj_dir+self.project_name+".o"]
         # The symbol "." represents the location counter.  By setting it this way,
         # we don't need a linker script to set the base address of our new code.
         args.extend(("--defsym", ".="+hex(self.base_addr)))
-        
         for file in self.linker_script_files:
             args.extend(("-T", file))
-        
-        args.extend(("-o", self.obj_dir+self.project_name+".o"))
-        
         for filename in self.obj_files:
             args.append(self.obj_dir+filename)
-        
         args.extend(("-Map", self.obj_dir+self.project_name+".map"))
+        for flag in self.ld_flags:
+            args.append(flag)
         if self.verbose:
             print(args)
         subprocess.call(args)
