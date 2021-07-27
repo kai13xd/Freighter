@@ -4,7 +4,7 @@ DOL C-Kit is a toolkit for compiling C code (or assembly) using DevkitPPC to inj
 Credit to Yoshi2 for creating the original GC C-Kit.  DOL C-Kit couldn't exist without it.
 
 # How to use it / The Project Class
-DOL C-Kit is a Python module.  Run INSTALL.bat to install it.
+DOL C-Kit is a Python module.  To install on Windows, run INSTALL.bat as administrator.  To install on Linux, run INSTALL.sh as superuser.
 
 The Project class automates the tedious parts of compiling, linking, and injecting custom code into a \*.dol executable.  The Project class constructor has two optional parameters to set the "base_addr" and "verbose" member variables.  By default, they are set to None and False, respectively.
 
