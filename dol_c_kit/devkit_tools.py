@@ -1,13 +1,13 @@
 import subprocess
 import os
 import platform
-from dol_c_kit import assemble_branch, write_branch
+from dol_c_kit import assemble_branch, write_branch, mask_field, hi, lo, hia
 
 from dolreader.dol import DolFile, write_uint32
 from dolreader.section import Section, TextSection, DataSection
 from elftools.elf.elffile import ELFFile
 from geckolibs.gct import GeckoCodeTable
-from geckolibs.geckocode import GeckoCode, GeckoCommand, WriteBranch, Write32, WriteString
+from geckolibs.geckocode import GeckoCode, GeckoCommand, WriteBranch, Write32, WriteString, Write16
 
 
 class Hook(object):
@@ -111,6 +111,49 @@ class StringHook(Hook):
         return "{:s} {:08X} {:s} \"{:s}\"".format(
                "[String]     ", self.addr, "-->" if self.good else "-X>", self.string)
 
+class Immediate16Hook(Hook):
+    def __init__(self, addr, sym_name, modifier):
+        Hook.__init__(self, addr)
+        self.sym_name = sym_name
+        self.modifier = modifier
+    
+    def resolve(self, symbols):
+        # I wrote these fancy @h, @l, @ha functions to barely use them, lol.  When writing
+        # 16-bit immediates, you don't really need to worry about whether or not it is
+        # signed, since you're masking off any sign extension that happens regardless.
+        if self.sym_name in symbols:
+            if self.modifier == "@h":
+                self.data = hi(symbols[self.sym_name]['st_value'], True)
+            elif self.modifier == "@l":
+                self.data = lo(symbols[self.sym_name]['st_value'], True)
+            elif self.modifier == "@ha":
+                self.data = hia(symbols[self.sym_name]['st_value'], True)
+            elif self.modifier == "@sda":
+                if symbols["_SDA_BASE_"]['st_value'] == None:
+                    raise RuntimeError("You must set this project's sda_base member before using the @sda modifier!  Check out the set_sda_bases method.")
+                self.data = mask_field(symbols[self.sym_name]['st_value'] - symbols["_SDA_BASE_"]['st_value'], 16, True)
+            elif self.modifier == "@sda2":
+                if symbols["_SDA2_BASE_"]['st_value'] == None:
+                    raise RuntimeError("You must set this project's sda2_base member before using the @sda2 modifier!  Check out the set_sda_bases method.")
+                self.data = mask_field(symbols[self.sym_name]['st_value'] - symbols["_SDA2_BASE_"]['st_value'], 16, True)
+            else:
+                print("Unknown modifier: \"{}\"".format(self.modifier))
+    
+    def apply_dol(self, dol):
+        if self.data and dol.is_mapped(self.addr):
+            dol.write_uint16(self.addr, self.data)
+            self.good = True
+    
+    def write_geckocommand(self, f):
+        if self.data:
+            gecko_command = Write16(self.data, self.addr)
+            f.write(gecko_command.as_text() + "\n")
+            self.good = True
+        
+    def dump_info(self):
+        return "{:s} {:08X} {:s} {:s} {:s}".format(
+               "[Immediate16]", self.addr, "-->" if self.good else "-X>", self.sym_name, self.modifier)
+
 def find_rom_end(dol):
     rom_end = 0x80000000
     for section in dol.sections:
@@ -139,6 +182,8 @@ SupportedGeckoCodetypes = [
 class Project(object):
     def __init__(self, base_addr=None, verbose=False):
         self.base_addr = base_addr
+        self.sda_base = None
+        self.sda2_base = None
         
         # System member variables
         if platform.system() == "Windows":
@@ -187,20 +232,27 @@ class Project(object):
             code_table = GeckoCodeTable.from_bytes(f)
         self.gecko_codetable.append(code_table)
     
-    def add_branch(self, addr, funcname, LK=False):
-        self.hooks.append(BranchHook(addr, funcname, LK))
+    def add_branch(self, addr, sym_name, LK=False):
+        self.hooks.append(BranchHook(addr, sym_name, LK))
     
-    def add_branchlink(self, addr, funcname):
-        self.add_branch(addr, funcname, LK=True)
+    def add_branchlink(self, addr, sym_name):
+        self.add_branch(addr, sym_name, LK=True)
     
-    def add_pointer(self, addr, funcname):
-        self.hooks.append(PointerHook(addr, funcname))
+    def add_pointer(self, addr, sym_name):
+        self.hooks.append(PointerHook(addr, sym_name))
     
     def add_string(self, addr, string, encoding = "ascii", max_strlen = -1):
         self.hooks.append(StringHook(addr, string, encoding, max_strlen))
     
+    def add_immediate16(self, addr, sym_name, modifier):
+        self.hooks.append(Immediate16Hook(addr, sym_name, modifier))
+    
     def set_osarena_patcher(self, function):
         self.osarena_patcher = function
+    
+    def set_sda_bases(self, sda_base, sda2_base):
+        self.sda_base = sda_base
+        self.sda2_base = sda2_base
     
     def build_dol(self, in_dol_path, out_dol_path):
         with open(in_dol_path, "rb") as f:
@@ -412,6 +464,12 @@ class Project(object):
         # The symbol "." represents the location counter.  By setting it this way,
         # we don't need a linker script to set the base address of our new code.
         args.extend(("--defsym", ".="+hex(self.base_addr)))
+        # Since we have to gather sda/sda2 base addresses for the project, we
+        # might as well send that info to the linker if we have it.
+        if self.sda_base:
+            args.extend(("--defsym", "_SDA_BASE_="+hex(self.sda_base)))
+        if self.sda2_base:
+            args.extend(("--defsym", "_SDA2_BASE_="+hex(self.sda2_base)))
         for file in self.linker_script_files:
             args.extend(("-T", file))
         for filename in self.obj_files:
@@ -436,10 +494,15 @@ class Project(object):
             
             symtab = elf.get_section_by_name(".symtab")
             for iter in symtab.iter_symbols():
+                #print("{}   {}".format(iter.name, iter.entry))
                 # Filter out worthless symbols, as well as STT_SECTION and STT_FILE type symbols.
                 if iter.entry['st_info']['bind'] == "STB_LOCAL":
+                    #print("{}   {}".format(iter.name, iter.entry))
                     continue
                 self.symbols[iter.name] = iter.entry
+            # Force _SDA_BASE_ and _SDA2_BASE_ to exist.  The compiler doesn't reliably make them available.
+            self.symbols["_SDA_BASE_"] = {'st_name': 0, 'st_value': self.sda_base, 'st_size': 0, 'st_info': {'bind': 'STB_LOCAL', 'type': 'STT_OBJECT'}, 'st_other': {'visibility': 'STV_DEFAULT'}, 'st_shndx': 'SHN_ABS'}
+            self.symbols["_SDA2_BASE_"] = {'st_name': 0, 'st_value': self.sda2_base, 'st_size': 0, 'st_info': {'bind': 'STB_LOCAL', 'type': 'STT_OBJECT'}, 'st_other': {'visibility': 'STV_DEFAULT'}, 'st_shndx': 'SHN_ABS'}
         return True
     
     def __build_project(self):

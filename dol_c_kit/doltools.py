@@ -14,6 +14,28 @@ def mask_field(val, bits, signed):
             raise RuntimeError("{0} too large for {1}-bit unsigned field".format(val, bits))
     return val & (2**bits - 1)
 
+def sign_extend(val, bits):
+    sign_bit = 1 << (bits - 1)
+    return (val & (sign_bit - 1)) - (val & sign_bit)
+
+def hi(val, signed): # @h Modifier
+    if signed:
+        return sign_extend(val >> 16, 16)
+    else:
+        return val >> 16 & 0xFFFF
+
+def lo(val, signed): # @l Modifier
+    if signed:
+        return sign_extend(val, 16)
+    else:
+        return val & 0xFFFF
+
+def hia(val, signed): # @ha Modifier
+    if val & 0x8000:
+        return hi(val + 0x10000, signed)
+    else:
+        return hi(val, signed)
+        
 
 def assemble_branch(addr, target_addr, LK=False, AA=False):
     out = 0

@@ -1,7 +1,12 @@
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 __author__ = "Minty Meeo"
 __credits__ = "Yoshi2 (RenolY2)"
 
+from dol_c_kit.doltools import mask_field
+from dol_c_kit.doltools import sign_extend
+from dol_c_kit.doltools import hi
+from dol_c_kit.doltools import lo
+from dol_c_kit.doltools import hia
 from dol_c_kit.doltools import assemble_branch
 from dol_c_kit.doltools import assemble_integer_arithmetic_immediate
 from dol_c_kit.doltools import assemble_integer_logical_immediate

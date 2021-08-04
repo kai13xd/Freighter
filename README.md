@@ -17,6 +17,8 @@ The Project class has many member variables that may be directly modified:
 * as_flags: Non-crucial flags passed to powerpc-eabi-as.  Defaults include "-w".
 * ld_flags: Non-crucial flags passed to powerpc-eabi-ld.  Defaults include nothing.
 * base_addr: The location new data will be put at.  This is set by the constructor, but may be modified directly as well.
+* sda_base: The value used for the \_SDA\_BASE\_ symbol.  This is set by the set\_sda\_bases method, but may be modified directly as well.
+* sda2_base: The value used for the \_SDA2\_BASE\_ symbol.  This is set by the set\_sda\_bases method, but may be modified directly as well.
 * verbose: Flag for additional information printing.  This is set by the constructor, but may be modified directly as well.
 
 By shifting forward the stack, db_stack, and OSArenaLo, space for new data can be allocated.  To do this, a patching function modifying a given game's "\_\_init_registers", "OSInit", and "\_\_OSThreadInit" functions must be written.  The project's save_dol function passes two parameters to this patching function: a DolFile class, and the base_addr of your project.
@@ -49,8 +51,14 @@ Declare a pointer to a symbol to be written at a given address.
 * `add_string(self, addr, string, encoding = "ascii", max_size = -1)`<br>
 Declare a string to be written at a given address.  Optionally, an encoding and maximum size (in bytes) can be specified.
 
+* `add_immediate16(addr, funcname, modifier)`<br>
+Declare a 16-bit immediate to be written at a given address.  This is useful for modifying the SIMM, UIMM, and d fields of certain instructions.  Valid modifiers include "@h", "@l", "@ha", "@sda", and "@sda2".  Make sure to use the set\_sda\_base method before trying to use the "@sda" or "sda2" modifiers.
+
 * `set_osarena_patcher(function)`<br>
 Give your project a game-specific patching function to use to allocate space for new data.
+
+* `set_sda_bases(sda_base, sda2_base)`<br>
+Set the \_SDA\_BASE\_ and \_SDA2\_BASE\_ symbols.  These values get passed to the linker.  They are also important for the @sda and @sda2 modifiers for Immediate16Hooks.
 
 ## Step 2: Build the project
 * `build_dol(in_dol_path, out_dol_path)`<br>
