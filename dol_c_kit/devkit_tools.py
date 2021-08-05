@@ -138,6 +138,7 @@ class Immediate16Hook(Hook):
                 self.data = mask_field(symbols[self.sym_name]['st_value'] - symbols["_SDA2_BASE_"]['st_value'], 16, True)
             else:
                 print("Unknown modifier: \"{}\"".format(self.modifier))
+            self.data = mask_field(self.data, 16, True)
     
     def apply_dol(self, dol):
         if self.data and dol.is_mapped(self.addr):
@@ -153,6 +154,55 @@ class Immediate16Hook(Hook):
     def dump_info(self):
         return "{:s} {:08X} {:s} {:s} {:s}".format(
                "[Immediate16]", self.addr, "-->" if self.good else "-X>", self.sym_name, self.modifier)
+
+# Paired-Singles Load and Store have a 12-bit immediate field, unlike normal load/store instructions
+class Immediate12Hook(Hook):
+    def __init__(self, addr, w, i, sym_name, modifier):
+        Hook.__init__(self, addr)
+        self.w = w
+        self.i = i
+        self.sym_name = sym_name
+        self.modifier = modifier
+    
+    def resolve(self, symbols):
+        # I wrote these fancy @h, @l, @ha functions to barely use them, lol.  When writing
+        # 16-bit immediates, you don't really need to worry about whether or not it is
+        # signed, since you're masking off any sign extension that happens regardless.
+        if self.sym_name in symbols:
+            if self.modifier == "@h":
+                self.data = hi(symbols[self.sym_name]['st_value'], True)
+            elif self.modifier == "@l":
+                self.data = lo(symbols[self.sym_name]['st_value'], True)
+            elif self.modifier == "@ha":
+                self.data = hia(symbols[self.sym_name]['st_value'], True)
+            elif self.modifier == "@sda":
+                if symbols["_SDA_BASE_"]['st_value'] == None:
+                    raise RuntimeError("You must set this project's sda_base member before using the @sda modifier!  Check out the set_sda_bases method.")
+                self.data = mask_field(symbols[self.sym_name]['st_value'] - symbols["_SDA_BASE_"]['st_value'], 16, True)
+            elif self.modifier == "@sda2":
+                if symbols["_SDA2_BASE_"]['st_value'] == None:
+                    raise RuntimeError("You must set this project's sda2_base member before using the @sda2 modifier!  Check out the set_sda_bases method.")
+                self.data = mask_field(symbols[self.sym_name]['st_value'] - symbols["_SDA2_BASE_"]['st_value'], 16, True)
+            else:
+                print("Unknown modifier: \"{}\"".format(self.modifier))
+            self.data = mask_field(self.data, 12, True)
+            self.data |= (mask_field(self.i, 1, False) << 12)
+            self.data |= (mask_field(self.w, 3, False) << 13)
+    
+    def apply_dol(self, dol):
+        if self.data and dol.is_mapped(self.addr):
+            dol.write_uint16(self.addr, self.data)
+            self.good = True
+    
+    def write_geckocommand(self, f):
+        if self.data:
+            gecko_command = Write16(self.data, self.addr)
+            f.write(gecko_command.as_text() + "\n")
+            self.good = True
+        
+    def dump_info(self):
+        return "{:s} {:08X} {:s} {:s} {:s}".format(
+               "[Immediate12]", self.addr, "-->" if self.good else "-X>", self.sym_name, self.modifier)
 
 def find_rom_end(dol):
     rom_end = 0x80000000
@@ -246,6 +296,9 @@ class Project(object):
     
     def add_immediate16(self, addr, sym_name, modifier):
         self.hooks.append(Immediate16Hook(addr, sym_name, modifier))
+    
+    def add_immediate12(self, addr, w, i, sym_name, modifier):
+        self.hooks.append(Immediate12Hook(addr, w, i, sym_name, modifier))
     
     def set_osarena_patcher(self, function):
         self.osarena_patcher = function

@@ -39,20 +39,23 @@ Add a textual [Gecko Code List](http://codes.rc24.xyz/) to the project.  When bu
 * `add_gecko_gct_file(filepath)`<br>
 Add a binary [Gecko Code Table](http://codes.rc24.xyz/) to the project.  When build_dol is used, codetypes 00, 02, 04, 06, 08, C6, C2, and F2 are permanently patched into the DOL.  When build_gecko is used, all given Gecko Codes are copied into a new Gecko Code List.
 
-* `add_branch(addr, funcname, LK=False)`<br>
+* `add_branch(addr, sym_name, LK=False)`<br>
 Declare a branch to a symbol to be written at a given address.  Optionally, pass LK=True to declare a branchlink.
 
-* `add_branchlink(addr, funcname)`<br>
+* `add_branchlink(addr, sym_name)`<br>
 Declare a branchlink to a symbol to be written at a given address.
 
-* `add_pointer(addr, funcname)`<br>
+* `add_pointer(addr, sym_name)`<br>
 Declare a pointer to a symbol to be written at a given address.
 
 * `add_string(self, addr, string, encoding = "ascii", max_size = -1)`<br>
 Declare a string to be written at a given address.  Optionally, an encoding and maximum size (in bytes) can be specified.
 
-* `add_immediate16(addr, funcname, modifier)`<br>
+* `add_immediate16(addr, sym_name, modifier)`<br>
 Declare a 16-bit immediate to be written at a given address.  This is useful for modifying the SIMM, UIMM, and d fields of certain instructions.  Valid modifiers include "@h", "@l", "@ha", "@sda", and "@sda2".  Make sure to use the set\_sda\_base method before trying to use the "@sda" or "sda2" modifiers.
+
+* `add_immediate12(addr, w, i, sym_name, modifier)`<br>
+Same thing as add\_immediate\_16, but for the 12-bit immediate field of Paired-Singles load/store instructions.  The w and i fields of the original instruction must also be provided.
 
 * `set_osarena_patcher(function)`<br>
 Give your project a game-specific patching function to use to allocate space for new data.
