@@ -27,8 +27,8 @@ class Hook(object):
         self.good = True
         
     def dump_info(self):
-        return "{:s} {:08X}".format(
-               "{:13s}".format("[Hook]       "), self.addr)
+        return repr("{:s} {:08X}".format(
+                    "{:13s}".format("[Hook]       "), self.addr))[+1:-1]
 
 class BranchHook(Hook):
     def __init__(self, addr, sym_name, lk_bit):
@@ -53,8 +53,8 @@ class BranchHook(Hook):
             self.good = True
     
     def dump_info(self):
-        return "{:s} {:08X} {:s} {:s}".format(
-               "[Branchlink] " if self.lk_bit else "[Branch]     ", self.addr, "-->" if self.good else "-X>", self.sym_name)
+        return repr("{:s} {:08X} {:s} {:s}".format(
+                    "[Branchlink] " if self.lk_bit else "[Branch]     ", self.addr, "-->" if self.good else "-X>", self.sym_name))[+1:-1]
 
 class PointerHook(Hook):
     def __init__(self, addr, sym_name):
@@ -77,8 +77,8 @@ class PointerHook(Hook):
             self.good = True
         
     def dump_info(self):
-        return "{:s} {:08X} {:s} {:s}".format(
-               "[Pointer]    ", self.addr, "-->" if self.good else "-X>", self.sym_name)
+        return repr("{:s} {:08X} {:s} {:s}".format(
+                    "[Pointer]    ", self.addr, "-->" if self.good else "-X>", self.sym_name))[+1:-1]
 
 class StringHook(Hook):
     def __init__(self, addr, string, encoding, max_strlen):
@@ -91,7 +91,7 @@ class StringHook(Hook):
         self.data = self.string.encode(self.encoding) + b'\x00'
         if self.max_strlen != -1:
             if len(self.data) > self.max_strlen:
-                print("Warning: {:s} exceeds {} bytes!".format(self.string, self.max_strlen))
+                print("Warning: \"{:s}\" exceeds {} bytes!".format(repr(self.string)[+1:-1], self.max_strlen))
             else:
                 while len(self.data) < self.max_strlen:
                     self.data += b'\x00'
@@ -108,8 +108,8 @@ class StringHook(Hook):
         self.good = True
         
     def dump_info(self):
-        return "{:s} {:08X} {:s} \"{:s}\"".format(
-               "[String]     ", self.addr, "-->" if self.good else "-X>", self.string)
+        return repr("{:s} {:08X} {:s} \"{:s}\"".format(
+                    "[String]     ", self.addr, "-->" if self.good else "-X>", self.string))[+1:-1]
 
 class Immediate16Hook(Hook):
     def __init__(self, addr, sym_name, modifier):
@@ -152,8 +152,8 @@ class Immediate16Hook(Hook):
             self.good = True
         
     def dump_info(self):
-        return "{:s} {:08X} {:s} {:s} {:s}".format(
-               "[Immediate16]", self.addr, "-->" if self.good else "-X>", self.sym_name, self.modifier)
+        return repr("{:s} {:08X} {:s} {:s} {:s}".format(
+                    "[Immediate16]", self.addr, "-->" if self.good else "-X>", self.sym_name, self.modifier))[+1:-1]
 
 # Paired-Singles Load and Store have a 12-bit immediate field, unlike normal load/store instructions
 class Immediate12Hook(Hook):
@@ -201,8 +201,8 @@ class Immediate12Hook(Hook):
             self.good = True
         
     def dump_info(self):
-        return "{:s} {:08X} {:s} {:s} {:s}".format(
-               "[Immediate12]", self.addr, "-->" if self.good else "-X>", self.sym_name, self.modifier)
+        return repr("{:s} {:08X} {:s} {:s} {:s}".format(
+                    "[Immediate12]", self.addr, "-->" if self.good else "-X>", self.sym_name, self.modifier))[+1:-1]
 
 def find_rom_end(dol):
     rom_end = 0x80000000
