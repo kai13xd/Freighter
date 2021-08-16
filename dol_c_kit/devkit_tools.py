@@ -419,65 +419,68 @@ class Project(object):
     
     def save_map(self, map_path):
         with open(map_path, "w") as map:
-            with open(self.obj_dir+self.project_name+".o", 'rb') as f:
-                elf = ELFFile(f)
-                symtab = elf.get_section_by_name(".symtab")
-                new_symbols = []
-                
-                for iter in symtab.iter_symbols():
-                    # Filter out worthless symbols, as well as STT_SECTION and STT_FILE type symbols.
-                    if iter.entry['st_info']['bind'] == "STB_LOCAL":
-                        continue
-                    # Symbols defined by the linker script have no section index, and are instead absolute.
-                    # Symbols we already have aren't needed in the new symbol map, so they are filtered out.
-                    if (iter.entry['st_shndx'] == 'SHN_ABS') or (iter.entry['st_shndx'] == 'SHN_UNDEF'):
-                        continue
-                    new_symbols.append(iter)
-                new_symbols.sort(key = lambda i: i.entry['st_value'])
-                
-                curr_section_name = ""
-                for iter in new_symbols:
-                    parent_section = elf.get_section(iter.entry['st_shndx'])
-                    if curr_section_name != parent_section.name:
-                        curr_section_name = parent_section.name
-                        map.write(
-                            "\n"
-                            "{} section layout\n"
-                            "  Starting        Virtual\n"
-                            "  address  Size   address\n"
-                            "  -----------------------\n".format(curr_section_name))
-                    map.write("  {:08X} {:06X} {:08X}  0 {}\n".format(
-                        iter.entry['st_value'] - self.base_addr, iter.entry['st_size'], iter.entry['st_value'], iter.name))
-                # Record Geckoblobs from patched-in C2/F2 codetypes.  I really wanted to name this section .gecko in the
-                # symbol map, but only .init and .text section headers tell Dolphin to color the symbols by index.
-                if self.gecko_code_metadata:
-                    map.write(
-                        "\n"
-                        ".text section layout\n"
-                        "  Starting        Virtual\n"
-                        "  address  Size   address\n"
-                        "  -----------------------\n")
-                    for code_vaddr, code_size, code_status, gecko_code, gecko_command_metadata in self.gecko_code_metadata:
-                        i = 0
-                        for cmd_vaddr, cmd_size, cmd_status, gecko_command in gecko_command_metadata:
-                            if gecko_command.codetype == GeckoCommand.Type.ASM_INSERT \
-                            or gecko_command.codetype == GeckoCommand.Type.ASM_INSERT_XOR:
-                                if cmd_status == "OMITTED":
-                                    map.write("  UNUSED   {:06X} ........ {}${}\n".format(
-                                        cmd_size, gecko_code.name, i))
-                                else:
-                                    map.write("  {:08X} {:06X} {:08X}  0 {}${}\n".format(
-                                        cmd_vaddr - self.base_addr, cmd_size, cmd_vaddr, gecko_code.name, i))
-                            i += 1
-                # For whatever reason, the final valid symbol loaded by Dolphin ( <= 5.0-13603 ) gets messed up
-                # and loses its size.  To compensate, an dummy symbol is thrown into the map at a dubious address.
+            try:
+                with open(self.obj_dir+self.project_name+".o", 'rb') as f:
+                    elf = ELFFile(f)
+                    symtab = elf.get_section_by_name(".symtab")
+                    new_symbols = []
+                    
+                    for iter in symtab.iter_symbols():
+                        # Filter out worthless symbols, as well as STT_SECTION and STT_FILE type symbols.
+                        if iter.entry['st_info']['bind'] == "STB_LOCAL":
+                            continue
+                        # Symbols defined by the linker script have no section index, and are instead absolute.
+                        # Symbols we already have aren't needed in the new symbol map, so they are filtered out.
+                        if (iter.entry['st_shndx'] == 'SHN_ABS') or (iter.entry['st_shndx'] == 'SHN_UNDEF'):
+                            continue
+                        new_symbols.append(iter)
+                    new_symbols.sort(key = lambda i: i.entry['st_value'])
+                    
+                    curr_section_name = ""
+                    for iter in new_symbols:
+                        parent_section = elf.get_section(iter.entry['st_shndx'])
+                        if curr_section_name != parent_section.name:
+                            curr_section_name = parent_section.name
+                            map.write(
+                                "\n"
+                                "{} section layout\n"
+                                "  Starting        Virtual\n"
+                                "  address  Size   address\n"
+                                "  -----------------------\n".format(curr_section_name))
+                        map.write("  {:08X} {:06X} {:08X}  0 {}\n".format(
+                            iter.entry['st_value'] - self.base_addr, iter.entry['st_size'], iter.entry['st_value'], iter.name))
+            except OSError:
+                pass
+            # Record Geckoblobs from patched-in C2/F2 codetypes.  I really wanted to name this section .gecko in the
+            # symbol map, but only .init and .text section headers tell Dolphin to color the symbols by index.
+            if self.gecko_code_metadata:
                 map.write(
                     "\n"
-                    ".dummy section layout\n"
+                    ".text section layout\n"
                     "  Starting        Virtual\n"
                     "  address  Size   address\n"
-                    "  -----------------------\n"
-                    "  00000000 000000 81200000  0 Workaround for Dolphin's bad symbol map loader\n")
+                    "  -----------------------\n")
+                for code_vaddr, code_size, code_status, gecko_code, gecko_command_metadata in self.gecko_code_metadata:
+                    i = 0
+                    for cmd_vaddr, cmd_size, cmd_status, gecko_command in gecko_command_metadata:
+                        if gecko_command.codetype == GeckoCommand.Type.ASM_INSERT \
+                        or gecko_command.codetype == GeckoCommand.Type.ASM_INSERT_XOR:
+                            if cmd_status == "OMITTED":
+                                map.write("  UNUSED   {:06X} ........ {}${}\n".format(
+                                    cmd_size, gecko_code.name, i))
+                            else:
+                                map.write("  {:08X} {:06X} {:08X}  0 {}${}\n".format(
+                                    cmd_vaddr - self.base_addr, cmd_size, cmd_vaddr, gecko_code.name, i))
+                        i += 1
+            # For whatever reason, the final valid symbol loaded by Dolphin ( <= 5.0-13603 ) gets messed up
+            # and loses its size.  To compensate, an dummy symbol is thrown into the map at a dubious address.
+            map.write(
+                "\n"
+                ".dummy section layout\n"
+                "  Starting        Virtual\n"
+                "  address  Size   address\n"
+                "  -----------------------\n"
+                "  00000000 000000 81200000  0 Workaround for Dolphin's bad symbol map loader\n")
     
     def cleanup(self):
         for filename in self.obj_files:
