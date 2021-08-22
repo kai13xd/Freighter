@@ -261,7 +261,11 @@ class Project(object):
         self.gecko_code_metadata = []
         self.osarena_patcher = None
         
-        
+        # For one-time messages
+        self.message_flags = [0,0,0,0,0,0,0,0,0,0,0,0]
+    
+    # Add stuff
+    
     def add_c_file(self, filepath):
         self.c_files.append(filepath)
         
@@ -282,23 +286,27 @@ class Project(object):
             code_table = GeckoCodeTable.from_bytes(f)
         self.gecko_codetable.append(code_table)
     
-    def add_branch(self, addr, sym_name, LK=False):
+    # Hook stuff
+    
+    def hook_branch(self, addr, sym_name, LK=False):
         self.hooks.append(BranchHook(addr, sym_name, LK))
     
-    def add_branchlink(self, addr, sym_name):
-        self.add_branch(addr, sym_name, LK=True)
+    def hook_branchlink(self, addr, sym_name):
+        self.hook_branch(addr, sym_name, LK=True)
     
-    def add_pointer(self, addr, sym_name):
+    def hook_pointer(self, addr, sym_name):
         self.hooks.append(PointerHook(addr, sym_name))
     
-    def add_string(self, addr, string, encoding = "ascii", max_strlen = -1):
+    def hook_string(self, addr, string, encoding = "ascii", max_strlen = -1):
         self.hooks.append(StringHook(addr, string, encoding, max_strlen))
     
-    def add_immediate16(self, addr, sym_name, modifier):
+    def hook_immediate16(self, addr, sym_name, modifier):
         self.hooks.append(Immediate16Hook(addr, sym_name, modifier))
     
-    def add_immediate12(self, addr, w, i, sym_name, modifier):
+    def hook_immediate12(self, addr, w, i, sym_name, modifier):
         self.hooks.append(Immediate12Hook(addr, w, i, sym_name, modifier))
+    
+    # Set stuff
     
     def set_osarena_patcher(self, function):
         self.osarena_patcher = function
@@ -306,6 +314,8 @@ class Project(object):
     def set_sda_bases(self, sda_base, sda2_base):
         self.sda_base = sda_base
         self.sda2_base = sda2_base
+    
+    # Do stuff
     
     def build_dol(self, in_dol_path, out_dol_path):
         with open(in_dol_path, "rb") as f:
@@ -492,6 +502,8 @@ class Project(object):
         self.symbols.clear()
         self.gecko_code_metadata.clear()
     
+    # Private stuff
+    
     def __compile(self, infile):
         args = [self.devkitppc_path+"powerpc-eabi-gcc", "-c", self.src_dir+infile, "-o", self.obj_dir+infile+".o", "-I", self.src_dir]
         for flag in self.gcc_flags:
@@ -580,3 +592,78 @@ class Project(object):
             is_processed |= self.__process_project()
         
         return is_processed
+    
+    # Deprecated stuff
+    
+    def add_branch(self, addr, sym_name, LK=False):
+        if not self.message_flags[6]:
+            print("\"add_branch\" is a deprecated method.  Please use \"hook_branch\" instead.")
+            self.message_flags[6] = True
+        self.hook_branch(addr, sym_name, LK)
+    
+    def add_branchlink(self, addr, sym_name):
+        if not self.message_flags[7]:
+            print("\"add_branchlink\" is a deprecated method.  Please use \"hook_branchlink\" instead.")
+            self.message_flags[7] = True
+        self.hook_branchlink(addr, sym_name)
+    
+    def add_pointer(self, addr, sym_name):
+        if not self.message_flags[8]:
+            print("\"add_pointer\" is a deprecated method.  Please use \"hook_pointer\" instead.")
+            self.message_flags[8] = True
+        self.hook_pointer(addr, sym_name)
+    
+    def add_string(self, addr, string, encoding = "ascii", max_strlen = -1):
+        if not self.message_flags[9]:
+            print("\"add_string\" is a deprecated method.  Please use \"hook_string\" instead.")
+            self.message_flags[9] = True
+        self.hook_string(addr, string, encoding, max_strlen)
+    
+    def add_immediate16(self, addr, sym_name, modifier):
+        if not self.message_flags[10]:
+            print("\"add_immediate16\" is a deprecated method.  Please use \"hook_immediate16\" instead.")
+            self.message_flags[10] = True
+        self.hook_immediate16(addr, sym_name, modifier)
+    
+    def add_immediate12(self, addr, w, i, sym_name, modifier):
+        if not self.message_flags[11]:
+            print("\"add_immediate12\" is a deprecated method.  Please use \"hook_immediate12\" instead.")
+            self.message_flags[11] = True
+        self.hook_immediate12(addr, w, i, sym_name, modifier)
+    
+    # VERY deprecated stuff (from Yoshi2's GC C-Kit)
+    
+    def add_file(self, filepath):
+        if not self.message_flags[0]:
+            print("\"add_file\" is a deprecated method.  Please use \"add_c_file\" instead.")
+            self.message_flags[0] = True
+        self.add_c_file(filepath)
+    
+    def add_linker_file(self, filepath):
+        if not self.message_flags[1]:
+            print("\"add_linker_file\" is a deprecated method.  Please use \"add_linker_script_file\" instead.")
+            self.message_flags[1] = True
+        self.add_linker_script_file(filepath)
+    
+    def branchlink(self, addr, funcname):
+        if not self.message_flags[2]:
+            print("\"branchlink\" is a deprecated method.  Please use \"hook_branchlink\" instead")
+            self.message_flags[2] = True
+        self.hook_branchlink(addr, funcname)
+    
+    def branch(self, addr, funcname):
+        if not self.message_flags[3]:
+            print("\"branch\" is a deprecated method.  Please use \"hook_branch\" instead")
+            self.message_flags[3] = True
+        self.hook_branch(addr, funcname)
+        
+    def apply_gecko(self, geckopath):
+        if not self.message_flags[4]:
+            print("\"apply_gecko\" is a deprecated method.  Please use \"add_gecko_txt_file\" instead.")
+            self.message_flags[4] = True
+        self.add_gecko_txt_file(geckopath)
+    
+    def build(self, newdolpath, address=None, offset=None):
+        if not self.message_flags[5]:
+            print("\"build\" is a deprecated method.  Please use \"build_dol\" instead.  Unfortunately, this method has no suitable redirect, so nothing can been done.")
+            self.message_flags[5] = True
