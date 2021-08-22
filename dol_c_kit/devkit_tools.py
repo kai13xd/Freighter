@@ -83,6 +83,7 @@ class PointerHook(Hook):
 class StringHook(Hook):
     def __init__(self, addr, string, encoding, max_strlen):
         Hook.__init__(self, addr)
+        self.data = bytearray()
         self.string = string
         self.encoding = encoding
         self.max_strlen = max_strlen
@@ -110,6 +111,34 @@ class StringHook(Hook):
     def dump_info(self):
         return repr("{:s} {:08X} {:s} \"{:s}\"".format(
                     "[String]     ", self.addr, "-->" if self.good else "-X>", self.string))[+1:-1]
+
+class FileHook(Hook):
+    def __init__(self, addr, filepath):
+        Hook.__init__(self, addr)
+        self.data = bytearray()
+        self.filepath = filepath
+    
+    def resolve(self, symbols):
+        try:
+            with open(self.filepath, "rb") as f:
+                self.data = f.read()
+        except OSError:
+            print("Warning: \"{:s}\" could not be opened!".format(repr(self.filepath)[+1:-1]))
+    
+    def apply_dol(self, dol):
+        if dol.is_mapped(self.addr):
+            dol.seek(self.addr)
+            dol.write(self.data)
+            self.good = True
+    
+    def write_geckocommand(self, f):
+        gecko_command = WriteString(self.data, self.addr)
+        f.write(gecko_command.as_text() + "\n")
+        self.good = True
+        
+    def dump_info(self):
+        return repr("{:s} {:08X} {:s} \"{:s}\"".format(
+                    "[File]       ", self.addr, "-->" if self.good else "-X>", self.filepath))[+1:-1]
 
 class Immediate16Hook(Hook):
     def __init__(self, addr, sym_name, modifier):
@@ -266,11 +295,14 @@ class Project(object):
     
     # Add stuff
     
-    def add_c_file(self, filepath):
-        self.c_files.append(filepath)
+    def add_c_file(self, filepath, gcc_flags=(), use_global_flags=True):
+        self.c_files.append((filepath, gcc_flags, use_global_flags))
         
-    def add_asm_file(self, filepath):
-        self.asm_files.append(filepath)
+    def add_asm_file(self, filepath, as_flags=(), use_global_flags=True):
+        self.asm_files.append((filepath, as_flags, use_global_flags))
+    
+    def add_obj_file(self, filepath, do_cleanup=False):
+        self.obj_files.append((filepath, do_cleanup))
     
     def add_linker_script_file(self, filepath):
         self.linker_script_files.append(filepath)
@@ -299,6 +331,9 @@ class Project(object):
     
     def hook_string(self, addr, string, encoding = "ascii", max_strlen = -1):
         self.hooks.append(StringHook(addr, string, encoding, max_strlen))
+    
+    def hook_file(self, addr, filepath):
+        self.hooks.append(FileHook(addr, filepath))
     
     def hook_immediate16(self, addr, sym_name, modifier):
         self.hooks.append(Immediate16Hook(addr, sym_name, modifier))
@@ -493,8 +528,9 @@ class Project(object):
                 "  00000000 000000 81200000  0 Workaround for Dolphin's bad symbol map loader\n")
     
     def cleanup(self):
-        for filename in self.obj_files:
-            try_remove(self.obj_dir+filename)
+        for filename, do_cleanup in self.obj_files:
+            if do_cleanup:
+                try_remove(self.obj_dir+filename)
         try_remove(self.obj_dir+self.project_name+".o")
         try_remove(self.obj_dir+self.project_name+".bin")
         try_remove(self.obj_dir+self.project_name+".map")
@@ -504,24 +540,30 @@ class Project(object):
     
     # Private stuff
     
-    def __compile(self, infile):
+    def __compile(self, infile, gcc_flags, use_global_flags):
         args = [self.devkitppc_path+"powerpc-eabi-gcc", "-c", self.src_dir+infile, "-o", self.obj_dir+infile+".o", "-I", self.src_dir]
-        for flag in self.gcc_flags:
+        if use_global_flags:
+            for flag in self.gcc_flags:
+                args.append(flag)
+        for flag in gcc_flags:
             args.append(flag)
         if self.verbose:
             print(args)
         subprocess.call(args)
-        self.obj_files.append(infile+".o")
+        self.obj_files.append((infile+".o", True))
         return True
     
-    def __assemble(self, infile):
+    def __assemble(self, infile, as_flags, use_global_flags):
         args = [self.devkitppc_path+"powerpc-eabi-as", self.src_dir+infile, "-o", self.obj_dir+infile+".o", "-I", self.src_dir]
-        for flag in self.as_flags:
+        if use_global_flags:
+            for flag in self.as_flags:
+                args.append(flag)
+        for flag in as_flags:
             args.append(flag)
         if self.verbose:
             print(args)
         subprocess.call(args)
-        self.obj_files.append(infile+".o")
+        self.obj_files.append((infile+".o", True))
         return True
     
     def __link_project(self):
@@ -540,7 +582,7 @@ class Project(object):
             args.extend(("--defsym", "_SDA2_BASE_="+hex(self.sda2_base)))
         for file in self.linker_script_files:
             args.extend(("-T", file))
-        for filename in self.obj_files:
+        for filename, do_cleanup in self.obj_files:
             args.append(self.obj_dir+filename)
         args.extend(("-Map", self.obj_dir+self.project_name+".map"))
         for flag in self.ld_flags:
@@ -580,11 +622,11 @@ class Project(object):
         is_linked = False
         is_processed = False
         
-        for filepath in self.c_files:
-            is_built |= self.__compile(filepath)
+        for filepath, gcc_flags, use_global_flags in self.c_files:
+            is_built |= self.__compile(filepath, gcc_flags, use_global_flags)
         
-        for filepath in self.asm_files:
-            is_built |= self.__assemble(filepath)
+        for filepath, as_flags, use_global_flags in self.asm_files:
+            is_built |= self.__assemble(filepath, as_flags, use_global_flags)
         
         if is_built == True:
             is_linked |= self.__link_project()

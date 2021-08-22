@@ -24,11 +24,14 @@ The Project class has many member variables that may be directly modified:
 By shifting forward the stack, db_stack, and OSArenaLo, space for new data can be allocated.  To do this, a patching function modifying a given game's "\_\_init_registers", "OSInit", and "\_\_OSThreadInit" functions must be written.  The project's save_dol function passes two parameters to this patching function: a DolFile class, and the base_addr of your project.
 
 ## Step 1: Populate the project
-* `add_c_file(filepath)`<br>
-Add a C source file to the project.
+* `add_c_file(filepath, gcc_flags=(), use_global_flags=True)`<br>
+Add a C source file to the project.  Two optional arguments may be given: gcc_flags is a tuple of strings passed to powerpc-eabi-gcc as flags, and use_global_flags determines if the gcc_flags member of the Project class are used for this source file.
 
-* `add_asm_file(filepath)`<br>
-Add an assembly source file to the project.
+* `add_asm_file(filepath, as_flags=(), use_global_flags=True)`<br>
+Add an assembly source file to the project.  Two optional arguments may be given: as_flags is a tuple of strings passed to powerpc-eabi-as as flags, and use_global_flags determines if the as_flags member of the Project class are used for this source file.
+
+* `add_obj_file(filepath, do_cleanup=False)`<br>
+Add an unlinked object file to the project.  This object file must be in the obj_dir, not the src_dir.  The cleanup method WILL DELETE FILES added by the add_obj_file method if the optional do_cleanup argument is True.
 
 * `add_linker_script_file(filepath)`<br>
 Add a [linker script file](https://ftp.gnu.org/old-gnu/Manuals/ld-2.9.1/html_chapter/ld_3.html) to the project.  This is useful for defining symbols.
@@ -48,8 +51,11 @@ Declare a branchlink to a symbol to be written at a given address.
 * `hook_pointer(addr, sym_name)`<br>
 Declare a pointer to a symbol to be written at a given address.
 
-* `hook_string(self, addr, string, encoding = "ascii", max_size = -1)`<br>
+* `hook_string(addr, string, encoding = "ascii", max_size = -1)`<br>
 Declare a string to be written at a given address.  Optionally, an encoding and maximum size (in bytes) can be specified.
+
+* `hook_file(addr, filepath)`<br>
+Declare a file to be written at a given address.  If the file cannot be opened, nothing is written at the given address.  This is useful for editing files embedded in the DOL.
 
 * `hook_immediate16(addr, sym_name, modifier)`<br>
 Declare a 16-bit immediate to be written at a given address.  This is useful for modifying the SIMM, UIMM, and d fields of certain instructions.  Valid modifiers include "@h", "@l", "@ha", "@sda", and "@sda2".  Make sure to use the set\_sda\_base method before trying to use the "@sda" or "sda2" modifiers.
