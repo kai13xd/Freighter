@@ -51,11 +51,11 @@ Declare a branchlink to a symbol to be written at a given address.
 * `hook_pointer(addr, sym_name)`<br>
 Declare a pointer to a symbol to be written at a given address.
 
-* `hook_string(addr, string, encoding = "ascii", max_size = -1)`<br>
+* `hook_string(addr, string, encoding = "ascii", max_strlen = None)`<br>
 Declare a string to be written at a given address.  Optionally, an encoding and maximum size (in bytes) can be specified.
 
-* `hook_file(addr, filepath)`<br>
-Declare a file to be written at a given address.  If the file cannot be opened, nothing is written at the given address.  This is useful for editing files embedded in the DOL.
+* `hook_file(addr, filepath, start=0, end=None, max_size = None)`<br>
+Declare a file to be written at a given address.  Optionally, you may provide a start and end offset to only include a portion of the file, and a maximum size (in bytes) can be specified.  Use a negative end offset if you want the offset to be relative to the end of the file.  If the file cannot be opened, nothing is written at the given address.  This is useful for editing files embedded in the DOL.
 
 * `hook_immediate16(addr, sym_name, modifier)`<br>
 Declare a 16-bit immediate to be written at a given address.  This is useful for modifying the SIMM, UIMM, and d fields of certain instructions.  Valid modifiers include "@h", "@l", "@ha", "@sda", and "@sda2".  Make sure to use the set\_sda\_base method before trying to use the "@sda" or "sda2" modifiers.

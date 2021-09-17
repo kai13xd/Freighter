@@ -90,7 +90,7 @@ class StringHook(Hook):
     
     def resolve(self, symbols):
         self.data = self.string.encode(self.encoding) + b'\x00'
-        if self.max_strlen != -1:
+        if self.max_strlen != None:
             if len(self.data) > self.max_strlen:
                 print("Warning: \"{:s}\" exceeds {} bytes!".format(repr(self.string)[+1:-1], self.max_strlen))
             else:
@@ -113,15 +113,27 @@ class StringHook(Hook):
                     "[String]     ", self.addr, "-->" if self.good else "-X>", self.string))[+1:-1]
 
 class FileHook(Hook):
-    def __init__(self, addr, filepath):
+    def __init__(self, addr, filepath, start, end, max_size):
         Hook.__init__(self, addr)
         self.data = bytearray()
         self.filepath = filepath
+        self.start = start
+        self.end = end
+        self.max_size = max_size
     
     def resolve(self, symbols):
         try:
             with open(self.filepath, "rb") as f:
-                self.data = f.read()
+                if self.end == None:
+                    self.data = f.read()[self.start:]
+                else:
+                    self.data = f.read()[self.start:self.end]
+                if self.max_size != None:
+                    if len(self.data) > self.max_size:
+                        print("Warning: \"{:s}\" exceeds {} bytes!".format(repr(self.filepath)[+1:-1], self.max_size))
+                    else:
+                        while len(self.data) < self.max_size:
+                            self.data += b'\x00'
         except OSError:
             print("Warning: \"{:s}\" could not be opened!".format(repr(self.filepath)[+1:-1]))
     
@@ -329,11 +341,11 @@ class Project(object):
     def hook_pointer(self, addr, sym_name):
         self.hooks.append(PointerHook(addr, sym_name))
     
-    def hook_string(self, addr, string, encoding = "ascii", max_strlen = -1):
+    def hook_string(self, addr, string, encoding = "ascii", max_strlen = None):
         self.hooks.append(StringHook(addr, string, encoding, max_strlen))
     
-    def hook_file(self, addr, filepath):
-        self.hooks.append(FileHook(addr, filepath))
+    def hook_file(self, addr, filepath, start = 0, end = None, max_size = None):
+        self.hooks.append(FileHook(addr, filepath, start, end, max_size))
     
     def hook_immediate16(self, addr, sym_name, modifier):
         self.hooks.append(Immediate16Hook(addr, sym_name, modifier))
@@ -364,13 +376,13 @@ class Project(object):
         if self.base_addr % 32:
             print("WARNING!  DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
         
-        data = bytearray()
+        datablob = bytearray()
 
         if self.__build_project() == True:
             with open(self.obj_dir+self.project_name+".bin", "rb") as f:
-                data += f.read()
-                while (len(data) % 4) != 0:
-                    data += b'\x00'
+                datablob += f.read()
+                while (len(datablob) % 4) != 0:
+                    datablob += b'\x00'
         
         for gecko_code in self.gecko_codetable:
             status = "ENABLED" if gecko_code.is_enabled() else "DISABLED"
@@ -386,7 +398,7 @@ class Project(object):
                     if gecko_command.codetype not in SupportedGeckoCodetypes:
                         print(gecko_command)
             
-            vaddress = self.base_addr + len(data)
+            vaddress = self.base_addr + len(datablob)
             geckoblob = bytearray()
             gecko_command_metadata = []
             
@@ -402,7 +414,7 @@ class Project(object):
                         gecko_command_metadata.append((vaddress + len(geckoblob), len(gecko_command.value), status, gecko_command))
                         geckoblob += gecko_command.value[:-4]
                         geckoblob += assemble_branch(vaddress + len(geckoblob), gecko_command._address + 4 | 0x80000000)
-            data += geckoblob
+            datablob += geckoblob
             if gecko_command_metadata:
                 self.gecko_code_metadata.append((vaddress, len(geckoblob), status, gecko_code, gecko_command_metadata))
         self.gecko_codetable.apply(dol)
@@ -413,54 +425,51 @@ class Project(object):
             if self.verbose:
                 print(hook.dump_info())
         
-        if len(data) > 0:
+        if len(datablob) > 0:
             new_section: Section
             if len(dol.textSections) <= DolFile.MaxTextSections:
-                new_section = TextSection(self.base_addr, data)
+                new_section = TextSection(self.base_addr, datablob)
             elif len(dol.dataSections) <= DolFile.MaxDataSections:
-                new_section = DataSection(self.base_addr, data)
+                new_section = DataSection(self.base_addr, datablob)
             else:
                 raise RuntimeError("DOL is full!  Cannot allocate any new sections.")
             dol.append_section(new_section)
             
             if self.osarena_patcher:
-                self.osarena_patcher(dol, self.base_addr + len(data))
+                self.osarena_patcher(dol, self.base_addr + len(datablob))
         
         with open(out_dol_path, "wb") as f:
             dol.save(f)
     
     def build_gecko(self, gecko_path):
         with open(gecko_path, "w") as f:
-            data = bytearray()
+            datablob = bytearray()
             
             if self.__build_project() == True:
                 with open(self.obj_dir+self.project_name+".bin", "rb") as bin:
-                    data += bin.read()
+                    datablob += bin.read()
             
             f.write("[Gecko]\n")
+            # Everything gets shoved into a large Gecko Code named after the project
+            f.write("${}\n".format(self.project_name))
             # Copy existing Gecko Codes
             for gecko_code in self.gecko_codetable:
-                f.write("${}\n".format(gecko_code.name))
-                f.write("{}\n".format(gecko_code.as_text()))
+                if gecko_code.is_enabled():
+                    f.write("* {}\n".format(gecko_code.name))
+                    f.write("{}\n".format(gecko_code.as_text()))
                 print("[GeckoCode]   {:12s} ${}".format("ENABLED" if gecko_code.is_enabled() else "DISABLED", gecko_code.name))
             # Create Program Data megacode
-            if data:
-                gecko_command = WriteString(data, self.base_addr)
-                f.write("$Program Data\n")
+            if datablob:
+                gecko_command = WriteString(datablob, self.base_addr)
+                f.write("* Program Data\n")
                 f.write(gecko_command.as_text() + "\n")
             # Create Hooks
-            f.write("$Hooks\n")
+            f.write("* Hooks\n")
             for hook in self.hooks:
                 hook.resolve(self.symbols)
                 hook.write_geckocommand(f)
                 if self.verbose:
                     print(hook.dump_info())
-            # Say they are all enabled
-            f.write("[Gecko_Enabled]\n")
-            for gecko_code in self.gecko_codetable:
-                f.write("${}\n".format(gecko_code.name))
-            f.write("$Program Data\n")
-            f.write("$Hooks\n")
     
     def save_map(self, map_path):
         with open(map_path, "w") as map:
