@@ -30,5 +30,5 @@ setuptools.setup(
         "Operating System :: Microsoft :: Windows",
     ],
     install_requires=("colorama", "dolreader", "pyelftools", "geckolibs"),
-    python_requires=">=3.9",
+    python_requires=">=3.10",
 )
