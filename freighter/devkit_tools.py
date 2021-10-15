@@ -6,21 +6,37 @@ from glob import glob
 from multiprocessing import Process, Queue
 from multiprocessing.context import ProcessError
 from os import listdir, makedirs, remove, removedirs
-
+from pathlib import Path
 from dolreader.dol import DolFile
 from dolreader.section import DataSection, Section, TextSection
 from elftools.elf.elffile import ELFFile
 from geckolibs.gct import GeckoCodeTable, GeckoCommand
-
+from os.path import abspath
 from freighter.constants import *
 from freighter.hooks import *
 
-TEMPDIR = "build/temp"
+
+def delete_file(filepath: str) -> bool:
+    try:
+        remove(filepath)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def delete_dir(path: str) -> bool:
+    try:
+        for file in glob(path + "*", recursive=True):
+            delete_file(file)
+        removedirs(path)
+        return True
+    except FileNotFoundError:
+        return False
 
 
 def dump_objdump(object_path: str, *args: str, outpath: str = None):
     """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
-    args = [DEVKITPPC + OBJDUMP, object_path] + list(args)
+    args = [OBJDUMP, object_path] + list(args)
     if not outpath:
         outpath = TEMPDIR + object_path.split("/")[-1] + ".objdump"
     with open(outpath, "w") as f:
@@ -30,7 +46,7 @@ def dump_objdump(object_path: str, *args: str, outpath: str = None):
 
 def dump_nm(object_path: str, *args: str, outpath: str = None):
     """Dumps the output from DevKitPPC's powerpc-eabi-nm.exe to a .txt file"""
-    args = [DEVKITPPC + NM, object_path] + list(args)
+    args = [NM, object_path] + list(args)
     if not outpath:
         outpath = TEMPDIR + object_path.split("/")[-1] + ".nm"
     with open(outpath, "w") as f:
@@ -40,11 +56,12 @@ def dump_nm(object_path: str, *args: str, outpath: str = None):
 
 def dump_readelf(object_path: str, *args: str, outpath: str = None):
     """Dumps the output from DevKitPPC's powerpc-eabi-readelf.exe to a .txt file"""
-    args = [DEVKITPPC+READELF, object_path] + list(args)
+    args = [READELF, object_path] + list(args)
     if not outpath:
         outpath = TEMPDIR + object_path.split("/")[-1] + ".readelf"
     with open(outpath, "w") as f:
         subprocess.call(args, stdout=f)
+    return outpath
 
 
 class Symbol:
@@ -77,16 +94,18 @@ class Project(object):
         self.verbose = False
         self.sda_base = 0
         self.sda2_base = 0
-        self.devkitppc = DEVKITPPC
         self.entry_function: str = None
         self.build_dir = "build/"
-        self.dol_inpath = "vanilla.dol"
-        self.dol_outpath = self.build_dir + "sys/main.dol"
+        self.dol_inpath: str = None
+        self.dol_outpath: str = None
         self.symbols_paths = list[str]()
         self.temp_dir = self.build_dir + "temp/"
         self.linkerscripts = list[str]()
         self.map_inpath: str = None
-        self.map_outpaths = [DOLPHIN_MAPS + self.gameid + ".map"]
+        if (DOLPHIN_MAPS):
+            self.map_outpaths = [DOLPHIN_MAPS + self.gameid + ".map"]
+        else:
+            self.map_outpaths = list[str]()
         self.linkerscript_template = "template.ld"
 
         self.common_args = list[str]()
@@ -95,9 +114,11 @@ class Project(object):
         self.project_objfile = self.temp_dir + self.project_name + ".o"
         self.ld_args = list[str]()
 
-        self.include_folders = get_default_include_folders()
-        self.source_folders = get_default_source_folders()
+        self.include_folders = list[str]()
+        self.source_folders = list[str]()
         self.library_folders = "/lib/"
+        self.ignored_files = list[str]()
+        self.__get_default_folders()
 
         self.c_files = list[str]()
         self.cpp_files = list[str]()
@@ -111,12 +132,26 @@ class Project(object):
         self.symbols = defaultdict(Symbol)
         self.osarena_patcher = None
 
+    def __get_default_folders(self) -> list[str]:
+        source_paths = ["source", "src", "code"]
+        include_paths = ["include", "includes", "headers"]
+
+        for folder in glob("*", recursive=True):
+            if folder in include_paths:
+                print(
+                    f'{FLGREEN}Automatically added include folder: {FLCYAN}"{folder}"')
+                self.include_folders.append(folder+"/")
+            if folder in source_paths:
+                print(
+                    f'{FLGREEN}Automatically added source folder: {FLCYAN}"{folder}"')
+                self.source_folders.append(folder+"/")
+
     def compile(self, input: str, output: str, iscpp=False, queue: Queue = None):
         args = []
         if iscpp:
-            args = [self.devkitppc + GPP, "-c"] + self.gpp_args
+            args = [GPP, "-c"] + self.gpp_args
         else:
-            args = [self.devkitppc + GCC, "-c"] + self.gcc_args
+            args = [GCC, "-c"] + self.gcc_args
         args += self.common_args
         for path in self.include_folders:
             args.append("-I" + path)
@@ -135,7 +170,7 @@ class Project(object):
 
     def __link(self):
         print(f"{FLCYAN}Linking...{FYELLOW}")
-        args = [self.devkitppc + GPP]
+        args = [GPP]
         for arg in self.ld_args:
             args.append("-Wl," + arg)
         for file in self.object_files:
@@ -270,7 +305,7 @@ class Project(object):
         for file in self.symbols_paths:
             lines = open(file, "r").readlines()
             with open(file + ".cache", "w") as f:
-                section = "." + file.split("\\")[1].split(".")[0]
+                section = "." + file.split("/")[1].split(".")[0]
                 for line in lines:
                     line = line.rstrip().partition("//")[0]
                     if line:
@@ -282,6 +317,7 @@ class Project(object):
                             symbol.hex_address = address
                             symbol.address = int(address, 16)
                             symbol.is_manually_defined = True
+                            symbol.section = section
 
     # Need to make this function more resilient against name mangling edgecases
     def get_function_symbol(self, line: str):
@@ -339,29 +375,29 @@ class Project(object):
                     f"{self.temp_dir + out}",
                 )
 
-    def assert_has_all_the_stuff(self):
+    def __assert_has_all_the_stuff(self):
         if self.dol_inpath is None:
-            print(f"{FYELLOW}[Warning] You didn't specify an input Dol file. You may compile but it won't be injected.\n{FWHITE}Use {FGREEN}set_vanilla_map_file{FWHITE} method.")
+            print(f"{FYELLOW}[Warning] You didn't specify an input Dol file. You may compile but nothing will be injected.\n{FWHITE}")
         if self.entry_function is None:
             raise Exception(
                 f"{FLRED}You should assign an entry function with C linkage.\n{FWHITE}Use {FGREEN}set_entry_function{FWHITE} method.")
         if self.map_inpath is None:
-            print(f"{FYELLOW}[Warning] An input CodeWarrior symbol map was not found for C++Kit to process.\n{FWHITE}Use {FGREEN}set_vanilla_map_file{FWHITE} method.")
+            print(f"{FYELLOW}[Warning] An input CodeWarrior symbol map was not found for C++Kit to process.\n{FWHITE}")
         if not self.map_outpaths:
             print(
                 f"{FYELLOW}[Warning] Output path to Dolphin's Maps folder was not found.\n{FWHITE}Use {FGREEN}add_map_output{FWHITE} method.")
 
-    def build(self, dol_inpath:str=None, inject_address:int=None, dol_outpath:str=None, verbose=False, clean_up=False):
+    def build(self, dol_inpath: str = None, inject_address: int = None, dol_outpath: str = None, verbose=False, clean_up=False):
         self.verbose = verbose
-        if dol_inpath is None:
-            dol_inpath = self.dol_inpath
-        self.assert_has_all_the_stuff()
+        self.inject_address = inject_address
+        self.dol_inpath = dol_inpath
+        self.__get_source_files()
+        self.__assert_has_all_the_stuff()
 
         if dol_outpath is None:
-            dol_outpath = self.dol_outpath
+            dol_outpath = self.build_dir + "sys/main.dol"
 
         dol = DolFile(open(dol_inpath, "rb"))
-
         if self.inject_address == None:
             self.inject_address = dol.lastSection.address + dol.lastSection.size
             print(f"{FWHITE}Base address auto-set from ROM end: {FLBLUE}{self.inject_address:x}\n" f"{FWHITE}Do not rely on this feature if your DOL uses .sbss2\n")
@@ -370,6 +406,7 @@ class Project(object):
                 "WarningING!  DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
 
         makedirs(self.temp_dir, exist_ok=True)
+
         self.__compile()
         self.__find_undefined_cpp_symbols()
         self.__load_symbol_definitions()
@@ -378,6 +415,7 @@ class Project(object):
         self.__process_project()
         self.__analyze_final()
         self.__save_map()
+
         print(f"{FYELLOW}Begin Patching...")
         bin_data = bytearray(
             open(self.temp_dir + self.project_name + ".bin", "rb").read())
@@ -465,7 +503,6 @@ class Project(object):
 
         with open(dol_outpath, "wb") as f:
             dol.save(f)
-            del dol
 
         if clean_up:
             print(f"{FCYAN} Cleaning up temporary files\n")
@@ -526,7 +563,7 @@ class Project(object):
                         # We are better off just setting everything to .text as it allows you to click
                         # on the symbol then right click to copy it's address in Dolphin
                         sym_map.write(
-                            f"\n.text section layout\n" "  Starting        Virtual\n" "  address  Size   address\n" "  -----------------------\n".format())
+                            "\n.text section layout\n" "  Starting        Virtual\n" "  address  Size   address\n" "  -----------------------\n")
                     sym_map.write(
                         f"  {symbol.entry['st_value'] - self.inject_address:08X} {symbol.entry['st_size']:06X} {symbol.entry['st_value']:08X}  0 ")
                     if symbol.name in self.symbols:
@@ -538,7 +575,8 @@ class Project(object):
                 sym_map.seek(0)
                 sym_map = sym_map.readlines()
                 for path in self.map_outpaths:
-                    open(path, "w").writelines(inmap + sym_map)
+                    open(path + self.gameid + ".map",
+                         "w").writelines(inmap + sym_map)
 
     def demangle(self, string: str):
         process = subprocess.Popen([CPPFLIT, string], stdout=subprocess.PIPE)
@@ -551,9 +589,7 @@ class Project(object):
     def set_symbol_map(self, path: str):
         self.map_inpath = assert_file_exists(path)
 
-    def set_devkitppc(self, path: str):
-        """Sets the path to where the DevKitPPC bin folder is located."""
-        self.devkitppc = assert_dir_exists(path)
+
 
     def set_entry_function(self, func_symbol: str):
         """Sets the entry function to use. Must have C linkage (extern "C").
@@ -574,10 +610,8 @@ class Project(object):
 
     def add_symbols_folder(self, path: str):
         """Adds all .txt files found in this folder for Freighter to pull manually defined symbols from."""
-        assert_dir_exists(path)
-        files = glob(path + "*.txt", recursive=True)
-        for file in files:
-            self.symbols_paths.append(file)
+        for file in Path(assert_dir_exists(path)).glob("*.txt"):
+            self.symbols_paths.append(file.as_posix())
 
     def add_include_folder(self, path: str):
         """Adds the specified folder as an -I compiler flag
@@ -592,24 +626,26 @@ class Project(object):
         """
         self.include_folders.append(assert_dir_exists(path))
 
-    def add_source_folder(self, path: str, *ignore:str):
+    def __get_source_files(self):
         """Adds all source files found the specified folder to the Project for complilation.
         Files within ignore list will be removed."""
-        assert_dir_exists(path)
-        for file in glob(path + "*",recursive=True):
-            file = file.replace("\\", "/")
-            match(file.rsplit(".")[1]):
-                case "c":
-                    self.add_c_file(file)
-                case "cpp":
-                    self.add_cpp_file(file)
-                case "s":
-                    self.add_asm_file(file)
+        for folder in self.source_folders:
+            for file in Path(folder).glob("*.*"):
+                ext = file.suffix
+                file = file.as_posix()
+                if (file in self.ignored_files):
+                    continue
+                match(ext):
+                    case ".c":
+                        self.add_c_file(file)
+                    case ".cpp":
+                        self.add_cpp_file(file)
+                    case ".s":
+                        self.add_asm_file(file)
 
     def add_gecko_folder(self, path: str):
         """Adds all Gecko files found in this folder to the Project for complilation."""
-        assert_dir_exists(path)
-        for file in glob(path + "*", recursive=True):
+        for file in glob(assert_dir_exists(path) + "*", recursive=True):
             self.add_gecko_file(file)
 
     def add_c_file(self, path: str) -> None:
@@ -632,6 +668,11 @@ class Project(object):
     def add_static_library(self, path: str):
         """ Adds the static library (.a) file to the Project for compilation."""
         self.static_libs.append(assert_dir_exists(self.library_folders + path))
+
+    def ignore_file(self, *paths: str):
+        """ Tells Freighter to not compile these files"""
+        for file in paths:
+            self.ignored_files.append(assert_file_exists(file))
 
     def hook_branch(self, symbol: str, *addresses: int):
         """Create branch instruction(s) from the given symbol_name's absolute address to
