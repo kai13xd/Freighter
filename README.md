@@ -52,9 +52,6 @@ if __name__ == "__main__":
     project.gpp_args = gpp_args
     project.ld_args = ld_args
     
-    # Set the injection address for your code and data
-    project.set_base_address(0x80520E00)
-    
     # Setting an entry function is essential for -gc-sections to work it's magic. Make sure this function has 
     # C linkage
     project.set_entry_function("Entry")
@@ -68,16 +65,15 @@ if __name__ == "__main__":
     # Freighter will attempt to automatically output a .map file to your Dolphin's Map folder if it can find it
     # Add additional map outputs with this method
     project.add_map_output("build/files/GPVE01.map")
-
-    project.add_gecko_folder("gecko/")
+    
+    # Imports manually defined symbols in .txt foles found within this folder  
     project.add_symbols_folder("symbols/")
 
-    # Freighter will attempt to auto import all source files within this folder
-    project.add_source_folder("source/")
-
-    # Freighter will remove these files added with add_source_folder
-    project.ignore_c_file("source/test.c")
-    project.ignore_cpp_file("source/test.cpp")
+    # Freighter will attempt to auto import source files and include folders
+    
+    # Use these methods so Freighter doesn't compile these files
+    project.ignore_file("source/test.c")
+    project.ignore_file("source/test.cpp")
 
     # You can also add source files explicitly if you want
     project.add_asm_file("itWork.s")
@@ -94,6 +90,6 @@ if __name__ == "__main__":
     # Write this symbol's address to a specific location. Useful for overriding vtable pointers. 
     project.hook_pointer("doMyStuffInstead(GameObject *, int)", 0x802B6708)
 
-    # Specify the input .dol file and build
-    project.build("pikmin2.dol", verbose=True, clean_up=True)
+    # Specify the input .dol file and injection location for your code/data
+    project.build("pikmin2.dol", 0x80520E00, verbose=True, clean_up=True)
 ```
