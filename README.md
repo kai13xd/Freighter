@@ -1,11 +1,16 @@
 # Okay, what's Freighter?
 ### Hey there, Kai here.
 Freighter is toolkit made for compiling C, C++, or ASM using DevkitPPC for injecting new code/data sections into GameCube/Wii \*.dol executables. This is an extension of Yoshi2's C-Kit I worked on around middle of 2019 because I was abhorred with the methods modders used abusing C.
+# Credits
+ **[Yoshi2 (RenolY2)](https://github.com/RenolY2)**: The OG who made C-kit who made alot of the tools for Pikmin 2 and MKDD. He helped raise baby Kai when he was first learning hex and figuring out how pointers worked. He made a ton of tools that operate on Gamecube era gamefiles and really made the modding scene pop off. Thank you!
 
+**[Minty Meeo](https://github.com/Minty-Meeo)**: Mostly found around the Pikmin 1 scene but recently has been working on stuff on Pikmin 2. He has made alot of great changes to C-kit such as relocating the stack frame and cleaning up the code for injection hooks.
+
+**YoshiFirebird**: This man helped me ALOT way back when I was first learning C++. He originally had the nice idea of using the `#pragma` keyword where C-kit would preprocess the source file and import the injection address wherever it found it. Saved time having to backtrack to the build.py when I wanted to adjust the codecave site. Also doesn't make intellisense yell at you hah.
 # How do install?
-### Make sure you are using the latest version of [Python 3.10](https://www.python.org/downloads/).
+> ### ⚠️  **Make sure you are using the latest version of [Python 3.10](https://www.python.org/downloads/).**
 
-After that, simply install using `pip` on your console of choice:
+Simply install using `pip` on your console of choice:
 * Windows: `py -m pip install freighter`
 * Unix & Such: `python3 -m pip install freighter`
 
@@ -17,7 +22,7 @@ Dependencies should automatically be downloaded from PyPi.
 # What next?
 Next just create a `build.py` inside your work directory and import the `Project` class. 
 
->🛎️NOTE:  Freighter does it's best to fetch include and source folders found in the root folder. All source files found will be auto-imported into the project for compilation.
+> ### 🛎️**NOTE:  Freighter does it's best to fetch include and source folders found in the root folder. All source files found will be auto-imported into the project for compilation.**
 
 # Example build.py 
 Better documentation will come.. when I feel like it.
