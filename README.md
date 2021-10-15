@@ -3,19 +3,18 @@ Hey there, Kai here. Freighter is toolkit made for compiling C, C++, or ASM usin
 
 # How do install?
 Simply install using `pip` on your console of choice:
+* Windows: `py -m pip install freighter`
+* Unix & Such: `python3 -m pip install freighter`
 
-Windows:
-`py -m pip install freighter`
-
-Unix & Such:
-`python3 -m pip install freighter`
-
-It should just install all of the necessary dependencies. It better..
+Dependencies should automatically be downloaded from PyPi.
+## Optionals
+* [Window's Terminal](https://github.com/microsoft/terminal): It's a nice command-line manager that looks modern, has tabs, and support of emoji unicode characters. ✨ 
+* [VSCode](https://code.visualstudio.com/): My go to code editor. Supports Intellisense and it's what I exclusively use. It's got a huge list of extensions that make coding a breeze.
 
 # What next?
 Next just create a `build.py` inside your work directory and import the `Project` class. 
 
-Freighter does it's best to automatically fetch include and source directories so that you don't have to worry about passing those arguments to the compiler.
+>🛎️NOTE:  Freighter does it's best to fetch include and source folders found in the root folder. All source files found will be auto-imported into the project for compilation.
 
 # Example build.py 
 Better documentation will come.. when I feel like it.
@@ -62,14 +61,11 @@ if __name__ == "__main__":
     # You can manually define symbols in a linkerscript file.
     project.add_linkerscript("c_symbols.ld")
     
-    # Freighter will attempt to automatically output a .map file to your Dolphin's Map folder if it can find it
     # Add additional map outputs with this method
     project.add_map_output("build/files/GPVE01.map")
     
     # Imports manually defined symbols in .txt foles found within this folder  
     project.add_symbols_folder("symbols/")
-
-    # Freighter will attempt to auto import source files and include folders
     
     # Use these methods so Freighter doesn't compile these files
     project.ignore_file("source/test.c")
