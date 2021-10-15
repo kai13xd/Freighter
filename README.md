@@ -1,8 +1,11 @@
 # Okay, what's Freighter?
-Hey there, Kai here. Freighter is toolkit made for compiling C, C++, or ASM using DevkitPPC for injecting new code/data sections into GameCube/Wii \*.dol executables. This is an extension of Yoshi2's C-Kit I worked on around middle of 2019 because I was abhorred with the methods modders used abusing C.
+### Hey there, Kai here.
+Freighter is toolkit made for compiling C, C++, or ASM using DevkitPPC for injecting new code/data sections into GameCube/Wii \*.dol executables. This is an extension of Yoshi2's C-Kit I worked on around middle of 2019 because I was abhorred with the methods modders used abusing C.
 
 # How do install?
-Simply install using `pip` on your console of choice:
+### Make sure you are using the latest version of [Python 3.10](https://www.python.org/downloads/).
+
+After that, simply install using `pip` on your console of choice:
 * Windows: `py -m pip install freighter`
 * Unix & Such: `python3 -m pip install freighter`
 
