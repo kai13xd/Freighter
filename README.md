@@ -23,8 +23,6 @@ Dependencies should automatically be downloaded from PyPi.
 
 Next just create a `build.py` inside your work directory and import the `Project` class.
 
-> 🛎️NOTE: Freighter does it's best to fetch include and source folders found in the root folder. All source files found will be auto-imported into the project for compilation.
-
 # Example build.py
 
 Better documentation will come.. when I feel like it.
