@@ -1,38 +1,4 @@
 # Okay, what's Freighter?
-<<<<<<< HEAD
-
-### Hey there, Kai here.
-
-Freighter is toolkit made for compiling C, C++, or ASM using DevkitPPC for injecting new code/data sections into GameCube/Wii \*.dol executables. This is an extension of Yoshi2's C-Kit I worked on around middle of 2019 because I was abhorred with the methods modders used abusing C.
-
-# Credits
-
-Yoshi2 (RenolY2)
-
-
-The OG who made C-kit. He enthused about Python so I had no choice but to learn it.
-
-[MintyMeeo](https://github.com/Minty-Meeo)
-
- YoshiFirebird
- This man helped me ALOT way back when I was first learning C++. He originally had the idea of using the `#pragma` keyword where C-kit would preprocess the source file and import the injection address.
-
-# How do install?
-
-### Make sure you are using the latest version of [Python 3.10](https://www.python.org/downloads/).
-
-After that, simply install using `pip` on your console of choice:
-
-- Windows: `py -m pip install freighter`
-- Unix & Such: `python3 -m pip install freighter`
-
-Dependencies should automatically be downloaded from PyPi.
-
-## Optionals
-
-- [Window's Terminal](https://github.com/microsoft/terminal): It's a nice command-line manager that looks modern, has tabs, and support of emoji unicode characters. ✨
-- [VSCode](https://code.visualstudio.com/): My go to code editor. Supports Intellisense and it's what I exclusively use. It's got a huge list of extensions that make coding a breeze.
-=======
 ### Hey there, Kai here.
 Freighter is toolkit made for compiling C, C++, or ASM using DevkitPPC for injecting new code/data sections into GameCube/Wii \*.dol executables. This is an extension of Yoshi2's C-Kit I worked on around middle of 2019 because I was abhorred with the methods modders used abusing C.
 # Credits
@@ -52,19 +18,14 @@ Dependencies should automatically be downloaded from PyPi.
 ## Optionals
 * [Window's Terminal](https://github.com/microsoft/terminal): It's a nice command-line manager that looks modern, has tabs, and support of emoji unicode characters. ✨ 
 * [VSCode](https://code.visualstudio.com/): My go to code editor. Supports Intellisense and it's what I exclusively use. It's got a huge list of extensions that make coding a breeze.
->>>>>>> 5afd3f330a8c6ad704181e8bb964decfeaa1d193
 
 # What next?
 
-<<<<<<< HEAD
 Next just create a `build.py` inside your work directory and import the `Project` class.
 
 > 🛎️NOTE: Freighter does it's best to fetch include and source folders found in the root folder. All source files found will be auto-imported into the project for compilation.
 
 # Example build.py
-=======
-> ### 🛎️**NOTE:  Freighter does it's best to fetch include and source folders found in the root folder. All source files found will be auto-imported into the project for compilation.**
->>>>>>> 5afd3f330a8c6ad704181e8bb964decfeaa1d193
 
 Better documentation will come.. when I feel like it.
 
@@ -100,13 +61,8 @@ if __name__ == "__main__":
     project.gcc_args = gcc_args
     project.gpp_args = gpp_args
     project.ld_args = ld_args
-<<<<<<< HEAD
 
     # Setting an entry function is essential for -gc-sections to work it's magic. Make sure this function has
-=======
-    
-    # Setting an entry function is essential for -gc-sections to work it's magic. Make sure this function has 
->>>>>>> 5afd3f330a8c6ad704181e8bb964decfeaa1d193
     # C linkage
     project.set_entry_function("Entry")
 
@@ -115,7 +71,6 @@ if __name__ == "__main__":
 
     # You can manually define symbols in a linkerscript file.
     project.add_linkerscript("c_symbols.ld")
-<<<<<<< HEAD
 
     # Add additional map outputs with this method
     project.add_map_output("build/files/GPVE01.map")
@@ -123,15 +78,6 @@ if __name__ == "__main__":
     # Imports manually defined symbols in .txt foles found within this folder
     project.add_symbols_folder("symbols/")
 
-=======
-    
-    # Add additional map outputs with this method
-    project.add_map_output("build/files/GPVE01.map")
-    
-    # Imports manually defined symbols in .txt foles found within this folder  
-    project.add_symbols_folder("symbols/")
-    
->>>>>>> 5afd3f330a8c6ad704181e8bb964decfeaa1d193
     # Use these methods so Freighter doesn't compile these files
     project.ignore_file("source/test.c")
     project.ignore_file("source/test.cpp")
