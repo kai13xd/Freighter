@@ -15,7 +15,6 @@ from os.path import abspath
 from freighter.constants import *
 from freighter.hooks import *
 
-
 def delete_file(filepath: str) -> bool:
     try:
         remove(filepath)
@@ -63,7 +62,6 @@ def dump_readelf(object_path: str, *args: str, outpath: str = None):
         subprocess.call(args, stdout=f)
     return outpath
 
-
 class Symbol:
     def __init__(self):
         self.name = ""
@@ -84,29 +82,29 @@ class Symbol:
         self.source_file = ""
         self.library_file = ""
 
-
 class Project(object):
-    def __init__(self, name: str, gameid: str):
+    def __init__(self, name: str, gameid: str, auto_import = True):
 
         self.gameid = gameid
         self.project_name = name
         self.inject_address = 0
+        self.auto_import = auto_import
         self.verbose = False
         self.sda_base = 0
         self.sda2_base = 0
         self.entry_function: str = None
-        self.build_dir = "build/"
+        self.build_dir = BUILDDIR
+        self.temp_dir = TEMPDIR
         self.dol_inpath: str = None
         self.dol_outpath: str = None
         self.symbols_paths = list[str]()
-        self.temp_dir = self.build_dir + "temp/"
+        
         self.linkerscripts = list[str]()
         self.map_inpath: str = None
         if (DOLPHIN_MAPS):
-            self.map_outpaths = [DOLPHIN_MAPS + self.gameid + ".map"]
+            self.map_outpaths = [DOLPHIN_MAPS+gameid+".map"]
         else:
-            self.map_outpaths = list[str]()
-        self.linkerscript_template = "template.ld"
+            self.map_outpaths = [""]
 
         self.common_args = list[str]()
         self.gcc_args = list[str]()
@@ -133,6 +131,8 @@ class Project(object):
         self.osarena_patcher = None
 
     def __get_default_folders(self) -> list[str]:
+        if (self.auto_import == False):
+            return
         source_paths = ["source", "src", "code"]
         include_paths = ["include", "includes", "headers"]
 
@@ -178,19 +178,16 @@ class Project(object):
         args.extend(self.linkerscripts)
         args.extend(["-Wl,-Map", f"{self.temp_dir + self.project_name}.map"])
         args.extend(["-o", self.project_objfile])
-        print(args)
-        print(f"{FLMAGENTA}")
+        if self.verbose:
+            print(f"{FLMAGENTA}{args}")
         exit_code = subprocess.call(args)
         if exit_code:
             raise NameError(f'{ERROR}: failed to link object files"\n')
         else:
-            print(
-                f"{LINKED}{FLMAGENTA} -> {FLCYAN}{self.temp_dir + self.project_name}.o")
+            print(f"{LINKED}{FLMAGENTA} -> {FLCYAN}{self.temp_dir + self.project_name}.o")
 
     def __find_undefined_cpp_symbols(self):
         for file in self.object_files:
-            if ".c." in file:
-                continue
             self.__analyze_nm(dump_nm(file))
 
     def __analyze_nm(self, *files: str):
@@ -233,41 +230,40 @@ class Project(object):
 
     def __generate_linkerscript(self):
         with open(self.temp_dir + self.project_name + "_linkerscript.ld", "w") as f:
-            for line in open(self.linkerscript_template, "r").readlines():
-                if "$ENTRY" in line:
-                    line = "ENTRY(" + self.entry_function + ");\n"
-                if "$LIBRARIES" in line:
-                    if self.static_libs:
-                        for path in self.library_folders:
-                            f.write(f'SEARCH_DIR("{path}");\n')
-                        group = "GROUP("
-                        for lib in self.static_libs:
-                            group += f'"{lib}",\n\t'
-                        group = group[:-3]
-                        group += ");\n"
-                        f.write(group)
-                    continue
-                if "$SYMBOLS" in line:
-                    line = ""
-                    for symbol in self.symbols.values():
-                        if symbol.is_manually_defined and not symbol.is_written_to_ld:
-                            f.write(f"{symbol.name} = {symbol.hex_address};\n")
-                            symbol.is_written_to_ld = True
-                if "$START" in line:
-                    line = f"\t. = 0x{self.inject_address:4x};\n"
-                    f.write(line)
-                    continue
-                else:
-                    f.write(line)
-        self.add_linkerscript(
-            self.temp_dir + self.project_name + "_linkerscript.ld")
+            f.write("ENTRY(" + self.entry_function + ");\n")
+            if self.static_libs:
+                for path in self.library_folders:
+                    f.write(f'SEARCH_DIR("{path}");\n')
+                group = "GROUP("
+                for lib in self.static_libs:
+                    group += f'"{lib}",\n\t'
+                group = group[:-3]
+                group += ");\n"
+                f.write(group)
+            for symbol in self.symbols.values():
+                if symbol.is_manually_defined and not symbol.is_written_to_ld:
+                    f.write(f"{symbol.name} = {symbol.hex_address};\n")
+                    symbol.is_written_to_ld = True
+            f.write(f"SECTIONS\n{{\n\t. = 0x{self.inject_address:4x};\n")
+            f.write("""	
+    .sdata ALIGN(0x20):{*(.sdata*)}
+	.sbss ALIGN(0x20):{*(.sbss*)}
+	.sdata2 ALIGN(0x20):{*(.sdata2*)}
+	.sbss2 ALIGN(0x20):{*(.sbss2*)}
+	.rodata ALIGN(0x20):{*(.rodata*)}
+    .data ALIGN(0x20):{*(.data*)}
+	.bss ALIGN(0x20):{*(.bss*)}
+    .text ALIGN(0x20): {*(.text*)}
+	.ctors ALIGN(0x20):{*(.ctors*)}
+	.dtors ALIGN(0x20):{*(.dtors*)}
+    }""")
+        self.add_linkerscript(self.temp_dir + self.project_name + "_linkerscript.ld")
 
     def __analyze_final(self):
         print(f"{FYELLOW}Dumping objdump...{FCYAN}")
         dump_objdump(self.project_objfile, "-tSr", "-C")
         self.__analyze_nm(dump_nm(self.project_objfile))
-        self.__analyze_readelf(dump_readelf(
-            self.project_objfile, "-a", "--wide", "--debug-dump"))
+        self.__analyze_readelf(dump_readelf(self.project_objfile, "-a", "--wide", "--debug-dump"))
 
     def __analyze_readelf(self, path: str):
         section_map = {}
@@ -296,8 +292,6 @@ class Project(object):
                         continue
                     symbol.section = section_map[int(ndx)]
 
-                else:
-                    print("cringe" + name[0] + "\n")
 
     def __load_symbol_definitions(self):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
@@ -338,7 +332,7 @@ class Project(object):
                             c_linkage = True
                         if not line:
                             continue
-                        if line[0] == "/":
+                        if line[2:] == "/":
                             continue
                         elif "(" in line:
                             break
@@ -370,17 +364,13 @@ class Project(object):
         for item in listdir(self.temp_dir):
             if item.endswith(".o"):
                 out = item.split(".")[0] + ".s"
-                dump_objdump(
-                    ["-drsz", f"{self.temp_dir + item}"],
-                    f"{self.temp_dir + out}",
-                )
+                dump_objdump(["-drsz", f"{self.temp_dir + item}"],f"{self.temp_dir + out}")
 
     def __assert_has_all_the_stuff(self):
         if self.dol_inpath is None:
-            print(f"{FYELLOW}[Warning] You didn't specify an input Dol file. You may compile but nothing will be injected.\n{FWHITE}")
-        if self.entry_function is None:
-            raise Exception(
-                f"{FLRED}You should assign an entry function with C linkage.\n{FWHITE}Use {FGREEN}set_entry_function{FWHITE} method.")
+            print(f"{FYELLOW}[Warning] You didn't specify an input Dol file. Freighter will still attempt to compile it.\n{FWHITE}")
+        if "-gc-sections" in self.common_args and self.entry_function is None:
+            raise Exception(f"{FLRED} -gc-sections requires an entry function with C linkage to be set.\n{FWHITE}Use the{FGREEN}set_entry_function{FWHITE} method.")
         if self.map_inpath is None:
             print(f"{FYELLOW}[Warning] An input CodeWarrior symbol map was not found for C++Kit to process.\n{FWHITE}")
         if not self.map_outpaths:
@@ -402,8 +392,7 @@ class Project(object):
             self.inject_address = dol.lastSection.address + dol.lastSection.size
             print(f"{FWHITE}Base address auto-set from ROM end: {FLBLUE}{self.inject_address:x}\n" f"{FWHITE}Do not rely on this feature if your DOL uses .sbss2\n")
         if self.inject_address % 32:
-            print(
-                "WarningING!  DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
+            print("Warning!  DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
 
         makedirs(self.temp_dir, exist_ok=True)
 
@@ -423,22 +412,19 @@ class Project(object):
             bin_data += b"\x00"
         print(f"\n{FGREEN}[{FLGREEN}Gecko Codes{FGREEN}]")
         for gecko_code in self.gecko_table:
-            status = f"{FLGREEN}ENABLED {FLBLUE}" if gecko_code.is_enabled(
-            ) else f"{FLRED}DISABLED{FLYELLOW}"
+            status = f"{FLGREEN}ENABLED {FLBLUE}" if gecko_code.is_enabled() else f"{FLRED}DISABLED{FLYELLOW}"
             if gecko_code.is_enabled() == True:
                 for gecko_command in gecko_code:
                     if gecko_command.codetype not in SupportedGeckoCodetypes:
                         status = "OMITTED"
-
             print("{:12s} ${}".format(status, gecko_code.name))
             if status == "OMITTED":
                 print(f"{FLRED}Includes unsupported codetypes:")
                 for gecko_command in gecko_code:
                     if gecko_command.codetype not in SupportedGeckoCodetypes:
                         print(gecko_command)
-
             vaddress = self.inject_address + len(bin_data)
-            geckoblob = bytearray()
+            gecko_data = bytearray()
             gecko_meta = []
 
             for gecko_command in gecko_code:
@@ -448,24 +434,24 @@ class Project(object):
                             (0, len(gecko_command.value), status, gecko_command))
                     else:
                         dol.seek(gecko_command._address | 0x80000000)
-                        write_branch(dol, vaddress + len(geckoblob))
+                        write_branch(dol, vaddress + len(gecko_data))
                         gecko_meta.append(
                             (
-                                vaddress + len(geckoblob),
+                                vaddress + len(gecko_data),
                                 len(gecko_command.value),
                                 status,
                                 gecko_command,
                             )
                         )
-                        geckoblob += gecko_command.value[:-4]
-                        geckoblob += assemble_branch(
-                            vaddress + len(geckoblob),
+                        gecko_data += gecko_command.value[:-4]
+                        gecko_data += assemble_branch(
+                            vaddress + len(gecko_data),
                             gecko_command._address + 4 | 0x80000000,
                         )
-            bin_data += geckoblob
+            bin_data += gecko_data
             if gecko_meta:
                 self.gecko_meta.append(
-                    (vaddress, len(geckoblob), status, gecko_code, gecko_meta))
+                    (vaddress, len(gecko_data), status, gecko_code, gecko_meta))
         print("\n")
         self.gecko_table.apply(dol)
 
@@ -486,8 +472,8 @@ class Project(object):
             raise Exception(
                 f"{ERROR} C++Kit could not resolve hook addresses for the given symbols:\n{badlist}\n"
                 f"{FLWHITE}Reasons:{FLRED}\n"
-                "• The function was optimized out by the compiler for being out of scope of the entry function.\n"
-                "• Symbol definitions are missing from C++Kit.\n\n\n"
+                f"• The function was optimized out by the compiler for being out of the entry function's scope.\n"
+                f'• Symbol definitions are missing from C++Kit in the {FLCYAN}"symbols\"{FLRED} folder.\n\n\n'
             )
         if len(bin_data) > 0:
             new_section: Section
@@ -503,24 +489,20 @@ class Project(object):
 
         with open(dol_outpath, "wb") as f:
             dol.save(f)
-
         if clean_up:
             print(f"{FCYAN} Cleaning up temporary files\n")
             delete_dir(self.temp_dir)
-
         print(
-            f'\n{FLGREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {FLCYAN}"{self.dol_outpath}"{FLGREEN}!')
+            f'\n{FLGREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {FLCYAN}"{dol_outpath}"{FLGREEN}!')
 
     def __compile(self):
         queue = Queue()
         jobs = list[Process]()
-
         for source in self.c_files + self.cpp_files:
             outpath = self.temp_dir + source.split("/")[-1] + ".o"
             self.object_files.append(outpath)
             self.__process_pragmas(source)
-            task = Process(target=self.compile, args=(
-                source, outpath, source.endswith("cpp")))
+            task = Process(target=self.compile, args=(source, outpath, source.endswith("cpp")))
             jobs.append(task)
             task.start()
 
@@ -575,8 +557,7 @@ class Project(object):
                 sym_map.seek(0)
                 sym_map = sym_map.readlines()
                 for path in self.map_outpaths:
-                    open(path + self.gameid + ".map",
-                         "w").writelines(inmap + sym_map)
+                    open(path,"w").writelines(inmap + sym_map)
 
     def demangle(self, string: str):
         process = subprocess.Popen([CPPFLIT, string], stdout=subprocess.PIPE)
@@ -629,6 +610,8 @@ class Project(object):
     def __get_source_files(self):
         """Adds all source files found the specified folder to the Project for complilation.
         Files within ignore list will be removed."""
+        if (self.auto_import == False):
+            return
         for folder in self.source_folders:
             for file in Path(folder).glob("*.*"):
                 ext = file.suffix
