@@ -1,3 +1,4 @@
+
 import re
 import subprocess
 import time
@@ -313,23 +314,61 @@ class Project(object):
                             symbol.is_manually_defined = True
                             symbol.section = section
 
-    # Need to make this function more resilient against name mangling edgecases
+    # This func looks like booty should clean up later when i feel like it
     def get_function_symbol(self, line: str):
-        line = re.findall("[A-Za-z0-9_]*\(.*\)", line)[0]
-        return re.sub("( *)([*&])([A-Za-z0-9_]*)", r"\2", line)
+        if 'extern "C"' in line:
+            is_c_linkage = True
+        else: is_c_linkage = False
+        line = re.sub(".*[\*>] ",'',line) # remove templates
+        while(line.startswith(('*','&'))): # throw out trailing *'s and &'s
+            line=line[:1]
+        line = re.findall("[A-Za-z0-9_:]*\(.*\)", line)[0]
+
+        if is_c_linkage:
+            return re.sub('\(.*\)','',line) # c symbols have no params
+        if '()' in line:
+            return line
+        it = iter(re.findall('(extern "C"|[A-Za-z0-9_]+|[:]+|[<>\(\),*&])', line))
+        chunks = []
+        depth = 0
+        for s in it:
+            if s in ['const','volatile','unsigned','signed']:
+                chunks.append(s + ' ') # add space
+                continue
+            if s.isalpha(): 
+                v = next(it)
+                if depth and v.isalpha():
+                    chunks.append(s)
+                    continue
+                else:
+                    chunks.append(s)
+                    s = v
+            match(s):
+                case '<':
+                    depth += 1
+                case '>':
+                    depth -= 1
+                case ',':
+                    chunks.pop()
+                    chunks.append(', ')
+                    continue
+                case ')':
+                    chunks.pop()
+            chunks.append(s)
+        func = ""
+        for s in chunks:
+            func += s
+            func = func.replace('const char', 'char const')  # dumb
+        return func
 
     def __process_pragmas(self, file_path):
         c_linkage = False
-        with open(file_path, "r") as f:
-            while line := f.readline().strip():
-                if 'extern "C"' in line:  # Needs to handled better
-                    c_linkage = True
+        with open(file_path, "r", encoding="utf8") as f:
+            while line := f.readline():
                 if line.startswith("#pragma hook"):
-                    branch_type, addresses = line[13:].split(" ")
+                    branch_type, *addresses = line[13:].split(" ")
                     while True:  # skip comments and find the next function declaration
-                        line = f.readline().strip()
-                        if 'extern "C"' in line:
-                            c_linkage = True
+                        line = f.readline()
                         if not line:
                             continue
                         if line[2:] == "/":
@@ -337,8 +376,6 @@ class Project(object):
                         elif "(" in line:
                             break
                     func = self.get_function_symbol(line)
-                    if c_linkage:
-                        func = func.replace("()", "")
                     match(branch_type):
                         case "bl":
                             for address in addresses:
@@ -357,8 +394,6 @@ class Project(object):
                 #        addresses.insert(0, info)
                 #    except:
                 #        raise Exception("In pragma write: function name is not declared in quotes!")
-                if c_linkage and "}" in line or ");" in line:
-                    c_linkage = False
 
     def dump_asm(self):
         for item in listdir(self.temp_dir):
