@@ -307,7 +307,10 @@ class Project(object):
                         (name, address) = [x.strip()
                                            for x in line.split(" = ")]
                         if name in self.symbols:
+
                             symbol = self.symbols[name]
+                            if symbol.source_file: #skip this symbol because we are overriding it
+                                continue
                             f.write(line + "\n")
                             symbol.hex_address = address
                             symbol.address = int(address, 16)
@@ -386,14 +389,19 @@ class Project(object):
                         case _:
                             raise BaseException(
                                 f"\n{ERROR} Wrong branch type given in #pragma hook declaration! {FLBLUE}'{type}'{FLRED} is not supported!")
-                # elif line.startswith("#pragma write"):
-                #    string = line.replace("#pragma write", "")
-                #    try:
-                #        info = re.findall(r'"([^"]*)"', string)[0]
-                #        addresses = re.findall(r"0[xX][0-9a-fA-F]+", string)
-                #        addresses.insert(0, info)
-                #    except:
-                #        raise Exception("In pragma write: function name is not declared in quotes!")
+                elif line.startswith("#pragma write"):
+                    address = line[14:].strip()
+                    while True:  # skip comments and find the next function declaration
+                        line = f.readline()
+                        if not line:
+                            continue
+                        if line[2:] == "/":
+                            continue
+                        elif "(" in line:
+                            break
+                    func = self.get_function_symbol(line)
+                    self.hook_pointer(func,int(address,16))
+                       
 
     def dump_asm(self):
         for item in listdir(self.temp_dir):
