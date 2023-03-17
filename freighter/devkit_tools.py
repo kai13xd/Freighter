@@ -1,4 +1,3 @@
-
 import re
 import subprocess
 import time
@@ -15,6 +14,7 @@ from geckolibs.gct import GeckoCodeTable, GeckoCommand
 from os.path import abspath
 from freighter.constants import *
 from freighter.hooks import *
+
 
 def delete_file(filepath: str) -> bool:
     try:
@@ -34,11 +34,11 @@ def delete_dir(path: str) -> bool:
         return False
 
 
-def dump_objdump(object_path: str, *args: str, outpath: str = None):
+def dump_objdump(objectfile_path: str, *args: str, outpath: str = None):
     """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
-    args = [OBJDUMP, object_path] + list(args)
+    args = [OBJDUMP, objectfile_path] + list(args)
     if not outpath:
-        outpath = TEMPDIR + object_path.split("/")[-1] + ".objdump"
+        outpath = TEMPDIR + objectfile_path.split("/")[-1] + ".s"
     with open(outpath, "w") as f:
         subprocess.call(args, stdout=f)
     return outpath
@@ -63,6 +63,7 @@ def dump_readelf(object_path: str, *args: str, outpath: str = None):
         subprocess.call(args, stdout=f)
     return outpath
 
+
 class Symbol:
     def __init__(self):
         self.name = ""
@@ -83,8 +84,9 @@ class Symbol:
         self.source_file = ""
         self.library_file = ""
 
+
 class Project(object):
-    def __init__(self, name: str, gameid: str, auto_import = True):
+    def __init__(self, name: str, gameid: str, auto_import=True):
 
         self.gameid = gameid
         self.project_name = name
@@ -99,11 +101,11 @@ class Project(object):
         self.dol_inpath: str = None
         self.dol_outpath: str = None
         self.symbols_paths = list[str]()
-        
+
         self.linkerscripts = list[str]()
         self.map_inpath: str = None
-        if (DOLPHIN_MAPS):
-            self.map_outpaths = [DOLPHIN_MAPS+gameid+".map"]
+        if DOLPHIN_MAPS:
+            self.map_outpaths = [DOLPHIN_MAPS + gameid + ".map"]
         else:
             self.map_outpaths = [""]
 
@@ -132,20 +134,18 @@ class Project(object):
         self.osarena_patcher = None
 
     def __get_default_folders(self) -> list[str]:
-        if (self.auto_import == False):
+        if self.auto_import == False:
             return
         source_paths = ["source", "src", "code"]
         include_paths = ["include", "includes", "headers"]
 
         for folder in glob("*", recursive=True):
             if folder in include_paths:
-                print(
-                    f'{FLGREEN}Automatically added include folder: {FLCYAN}"{folder}"')
-                self.include_folders.append(folder+"/")
+                print(f'{FLGREEN}Automatically added include folder: {FLCYAN}"{folder}"')
+                self.include_folders.append(folder + "/")
             if folder in source_paths:
-                print(
-                    f'{FLGREEN}Automatically added source folder: {FLCYAN}"{folder}"')
-                self.source_folders.append(folder+"/")
+                print(f'{FLGREEN}Automatically added source folder: {FLCYAN}"{folder}"')
+                self.source_folders.append(folder + "/")
 
     def compile(self, input: str, output: str, iscpp=False, queue: Queue = None):
         args = []
@@ -158,12 +158,10 @@ class Project(object):
             args.append("-I" + path)
         args.extend([input, "-o", output])
         print(f'{COMPILING} "{input}"!')
-        process = subprocess.Popen(
-            args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         _, err = process.communicate()
         if process.returncode:
-            raise ProcessError(
-                f'\n{ERROR} {FWHITE + input}\n{err.decode("utf-8")}\nFailed to compile source. Fix your code.')
+            raise ProcessError(f'\n{ERROR} {FWHITE + input}\n{err.decode("utf-8")}\nFailed to compile source. Fix your code.')
         else:
             print(f'{SUCCESS}   "{input}"{FCYAN}')
             if queue:
@@ -231,6 +229,18 @@ class Project(object):
 
     def __generate_linkerscript(self):
         with open(self.temp_dir + self.project_name + "_linkerscript.ld", "w") as f:
+
+            def write_section(section: str):
+                symbols = [x for x in self.symbols.values() if x.section == section]
+                if symbols == []:
+                    return
+                f.write(f"\t{section} ALIGN(0x20):\n\t{{\n")
+                for symbol in symbols:
+                    if symbol.is_manually_defined and not symbol.is_written_to_ld:
+                        f.write(f"\t\t{symbol.name} = {symbol.hex_address};\n")
+                        symbol.is_written_to_ld = True
+                f.write("\t}\n\n")
+
             f.write("ENTRY(" + self.entry_function + ");\n")
             if self.static_libs:
                 for path in self.library_folders:
@@ -241,23 +251,31 @@ class Project(object):
                 group = group[:-3]
                 group += ");\n"
                 f.write(group)
-            for symbol in self.symbols.values():
-                if symbol.is_manually_defined and not symbol.is_written_to_ld:
-                    f.write(f"{symbol.name} = {symbol.hex_address};\n")
-                    symbol.is_written_to_ld = True
-            f.write(f"SECTIONS\n{{\n\t. = 0x{self.inject_address:4x};\n")
-            f.write("""	
-    .sdata ALIGN(0x20):{*(.sdata*)}
-	.sbss ALIGN(0x20):{*(.sbss*)}
-	.sdata2 ALIGN(0x20):{*(.sdata2*)}
-	.sbss2 ALIGN(0x20):{*(.sbss2*)}
-	.rodata ALIGN(0x20):{*(.rodata*)}
-    .data ALIGN(0x20):{*(.data*)}
-	.bss ALIGN(0x20):{*(.bss*)}
-    .text ALIGN(0x20): {*(.text*)}
-	.ctors ALIGN(0x20):{*(.ctors*)}
-	.dtors ALIGN(0x20):{*(.dtors*)}
-    }""")
+            f.write("SECTIONS\n{\n")
+            write_section(".init")
+            write_section(".text")
+            write_section(".rodata")
+            write_section(".data")
+            write_section(".bss")
+            write_section(".sdata")
+            write_section(".sbss")
+            write_section(".sdata2")
+            write_section(".sbss2")
+            f.write(f"\t. = 0x{self.inject_address:4x};")
+            f.write(
+                """    
+    .sdata  ALIGN(0x20):    { *(.sdata*) }
+	.sbss   ALIGN(0x20):    { *(.sbss*) }
+	.sdata2 ALIGN(0x20):    { *(.sdata2*) }
+	.sbss2  ALIGN(0x20):    { *(.sbss2*) }
+	.rodata ALIGN(0x20):    { *(.rodata*) }
+    .data   ALIGN(0x20):    { *(.data*) }
+	.bss    ALIGN(0x20):    { *(.bss*) }
+    .text   ALIGN(0x20):    { *(.text*) }
+	.ctors  ALIGN(0x20):    { *(.ctors*) }
+	.dtors  ALIGN(0x20):    { *(.dtors*) }
+}"""
+            )
         self.add_linkerscript(self.temp_dir + self.project_name + "_linkerscript.ld")
 
     def __analyze_final(self):
@@ -293,7 +311,6 @@ class Project(object):
                         continue
                     symbol.section = section_map[int(ndx)]
 
-
     def __load_symbol_definitions(self):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
         print(FYELLOW + "Loading manually defined symbols...")
@@ -304,12 +321,11 @@ class Project(object):
                 for line in lines:
                     line = line.rstrip().partition("//")[0]
                     if line:
-                        (name, address) = [x.strip()
-                                           for x in line.split(" = ")]
+                        (name, address) = [x.strip() for x in line.split(" = ")]
                         if name in self.symbols:
 
                             symbol = self.symbols[name]
-                            if symbol.source_file: #skip this symbol because we are overriding it
+                            if symbol.source_file:  # skip this symbol because we are overriding it
                                 continue
                             f.write(line + "\n")
                             symbol.hex_address = address
@@ -321,24 +337,25 @@ class Project(object):
     def get_function_symbol(self, line: str):
         if 'extern "C"' in line:
             is_c_linkage = True
-        else: is_c_linkage = False
-        line = re.sub(".*[\*>] ",'',line) # remove templates
-        while(line.startswith(('*','&'))): # throw out trailing *'s and &'s
-            line=line[:1]
+        else:
+            is_c_linkage = False
+        # line = re.sub(".*[\*>] ",'',line) # remove templates
+        while line.startswith(("*", "&")):  # throw out trailing *'s and &'s
+            line = line[:1]
         line = re.findall("[A-Za-z0-9_:]*\(.*\)", line)[0]
 
         if is_c_linkage:
-            return re.sub('\(.*\)','',line) # c symbols have no params
-        if '()' in line:
+            return re.sub("\(.*\)", "", line)  # c symbols have no params
+        if "()" in line:
             return line
         it = iter(re.findall('(extern "C"|[A-Za-z0-9_]+|[:]+|[<>\(\),*&])', line))
         chunks = []
         depth = 0
         for s in it:
-            if s in ['const','volatile','unsigned','signed']:
-                chunks.append(s + ' ') # add space
+            if s in ["const", "volatile", "unsigned", "signed"]:
+                chunks.append(s + " ")  # add space
                 continue
-            if s.isalpha(): 
+            if s.isalpha():
                 v = next(it)
                 if depth and v.isalpha():
                     chunks.append(s)
@@ -346,22 +363,22 @@ class Project(object):
                 else:
                     chunks.append(s)
                     s = v
-            match(s):
-                case '<':
+            match (s):
+                case "<":
                     depth += 1
-                case '>':
+                case ">":
                     depth -= 1
-                case ',':
+                case ",":
                     chunks.pop()
-                    chunks.append(', ')
+                    chunks.append(", ")
                     continue
-                case ')':
+                case ")":
                     chunks.pop()
             chunks.append(s)
         func = ""
         for s in chunks:
             func += s
-            func = func.replace('const char', 'char const')  # dumb
+            func = func.replace("const char", "char const")  # dumb
         return func
 
     def __process_pragmas(self, file_path):
@@ -379,7 +396,7 @@ class Project(object):
                         elif "(" in line:
                             break
                     func = self.get_function_symbol(line)
-                    match(branch_type):
+                    match (branch_type):
                         case "bl":
                             for address in addresses:
                                 self.hook_branchlink(func, int(address, 16))
@@ -387,8 +404,7 @@ class Project(object):
                             for address in addresses:
                                 self.hook_branch(func, int(address, 16))
                         case _:
-                            raise BaseException(
-                                f"\n{ERROR} Wrong branch type given in #pragma hook declaration! {FLBLUE}'{type}'{FLRED} is not supported!")
+                            raise BaseException(f"\n{ERROR} Wrong branch type given in #pragma hook declaration! {FLBLUE}'{type}'{FLRED} is not supported!")
                 elif line.startswith("#pragma write"):
                     address = line[14:].strip()
                     while True:  # skip comments and find the next function declaration
@@ -400,14 +416,15 @@ class Project(object):
                         elif "(" in line:
                             break
                     func = self.get_function_symbol(line)
-                    self.hook_pointer(func,int(address,16))
-                       
+                    self.hook_pointer(func, int(address, 16))
 
-    def dump_asm(self):
-        for item in listdir(self.temp_dir):
-            if item.endswith(".o"):
-                out = item.split(".")[0] + ".s"
-                dump_objdump(["-drsz", f"{self.temp_dir + item}"],f"{self.temp_dir + out}")
+    def disassemble_object_files(self, folder_path: str = None):
+        if folder_path is None:
+            folder_path = self.temp_dir
+        for object_file in listdir(folder_path):
+            if object_file.endswith(".o"):
+                out = object_file.split(".")[0] + ".s"
+                dump_objdump(f"{self.temp_dir + object_file}", "-drsz", outpath=f"{self.temp_dir + out}")
 
     def __assert_has_all_the_stuff(self):
         if self.dol_inpath is None:
@@ -417,8 +434,7 @@ class Project(object):
         if self.map_inpath is None:
             print(f"{FYELLOW}[Warning] An input CodeWarrior symbol map was not found for C++Kit to process.\n{FWHITE}")
         if not self.map_outpaths:
-            print(
-                f"{FYELLOW}[Warning] Output path to Dolphin's Maps folder was not found.\n{FWHITE}Use {FGREEN}add_map_output{FWHITE} method.")
+            print(f"{FYELLOW}[Warning] Output path to Dolphin's Maps folder was not found.\n{FWHITE}Use {FGREEN}add_map_output{FWHITE} method.")
 
     def build(self, dol_inpath: str = None, inject_address: int = None, dol_outpath: str = None, verbose=False, clean_up=False):
         self.verbose = verbose
@@ -449,8 +465,7 @@ class Project(object):
         self.__save_map()
 
         print(f"{FYELLOW}Begin Patching...")
-        bin_data = bytearray(
-            open(self.temp_dir + self.project_name + ".bin", "rb").read())
+        bin_data = bytearray(open(self.temp_dir + self.project_name + ".bin", "rb").read())
         while (len(bin_data) % 4) != 0:
             bin_data += b"\x00"
         print(f"\n{FGREEN}[{FLGREEN}Gecko Codes{FGREEN}]")
@@ -473,8 +488,7 @@ class Project(object):
             for gecko_command in gecko_code:
                 if gecko_command.codetype == GeckoCommand.Type.ASM_INSERT or gecko_command.codetype == GeckoCommand.Type.ASM_INSERT_XOR:
                     if status == "UNUSED" or status == "OMITTED":
-                        gecko_meta.append(
-                            (0, len(gecko_command.value), status, gecko_command))
+                        gecko_meta.append((0, len(gecko_command.value), status, gecko_command))
                     else:
                         dol.seek(gecko_command._address | 0x80000000)
                         write_branch(dol, vaddress + len(gecko_data))
@@ -493,8 +507,7 @@ class Project(object):
                         )
             bin_data += gecko_data
             if gecko_meta:
-                self.gecko_meta.append(
-                    (vaddress, len(gecko_data), status, gecko_code, gecko_meta))
+                self.gecko_meta.append((vaddress, len(gecko_data), status, gecko_code, gecko_meta))
         print("\n")
         self.gecko_table.apply(dol)
 
@@ -516,7 +529,7 @@ class Project(object):
                 f"{ERROR} C++Kit could not resolve hook addresses for the given symbols:\n{badlist}\n"
                 f"{FLWHITE}Reasons:{FLRED}\n"
                 f"• The function was optimized out by the compiler for being out of the entry function's scope.\n"
-                f'• Symbol definitions are missing from C++Kit in the {FLCYAN}"symbols\"{FLRED} folder.\n\n\n'
+                f'• Symbol definitions are missing from C++Kit in the {FLCYAN}"symbols"{FLRED} folder.\n\n\n'
             )
         if len(bin_data) > 0:
             new_section: Section
@@ -525,8 +538,7 @@ class Project(object):
             elif len(dol.dataSections) <= DolFile.MaxDataSections:
                 new_section = DataSection(self.inject_address, bin_data)
             else:
-                raise RuntimeError(
-                    "DOL is full!  Cannot allocate any new sections.")
+                raise RuntimeError("DOL is full!  Cannot allocate any new sections.")
             dol.append_section(new_section)
             self.__patch_osarena_low(dol, self.inject_address + len(bin_data))
 
@@ -535,8 +547,7 @@ class Project(object):
         if clean_up:
             print(f"{FCYAN} Cleaning up temporary files\n")
             delete_dir(self.temp_dir)
-        print(
-            f'\n{FLGREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {FLCYAN}"{dol_outpath}"{FLGREEN}!')
+        print(f'\n{FLGREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {FLCYAN}"{dol_outpath}"{FLGREEN}!')
 
     def __compile(self):
         queue = Queue()
@@ -559,8 +570,7 @@ class Project(object):
                 for symbol in elf.iter_sections():
                     # Filter out sections without SHF_ALLOC attribute
                     if symbol.header["sh_flags"] & 0x2:
-                        data.seek(
-                            symbol.header["sh_addr"] - self.inject_address)
+                        data.seek(symbol.header["sh_addr"] - self.inject_address)
                         data.write(symbol.data())
 
     def __save_map(self):
@@ -587,25 +597,21 @@ class Project(object):
                         curr_section_name = parent_section.name
                         # We are better off just setting everything to .text as it allows you to click
                         # on the symbol then right click to copy it's address in Dolphin
-                        sym_map.write(
-                            "\n.text section layout\n" "  Starting        Virtual\n" "  address  Size   address\n" "  -----------------------\n")
-                    sym_map.write(
-                        f"  {symbol.entry['st_value'] - self.inject_address:08X} {symbol.entry['st_size']:06X} {symbol.entry['st_value']:08X}  0 ")
+                        sym_map.write("\n.text section layout\n" "  Starting        Virtual\n" "  address  Size   address\n" "  -----------------------\n")
+                    sym_map.write(f"  {symbol.entry['st_value'] - self.inject_address:08X} {symbol.entry['st_size']:06X} {symbol.entry['st_value']:08X}  0 ")
                     if symbol.name in self.symbols:
                         symbol = self.symbols[symbol.name]
-                        sym_map.write(
-                            f"{symbol.demangled_name}\t {symbol.section} {symbol.source_file} {symbol.library_file}\n")
+                        sym_map.write(f"{symbol.demangled_name}\t {symbol.section} {symbol.source_file} {symbol.library_file}\n")
 
                 inmap = open(self.map_inpath, "r").readlines()
                 sym_map.seek(0)
                 sym_map = sym_map.readlines()
                 for path in self.map_outpaths:
-                    open(path,"w").writelines(inmap + sym_map)
+                    open(path, "w").writelines(inmap + sym_map)
 
     def demangle(self, string: str):
         process = subprocess.Popen([CPPFLIT, string], stdout=subprocess.PIPE)
-        demangled = re.sub(
-            "\r\n", "", process.stdout.readline().decode("ascii"))
+        demangled = re.sub("\r\n", "", process.stdout.readline().decode("ascii"))
         if self.verbose:
             print(f" 🧼 {FBLUE+ string + FLMAGENTA} -> {FLGREEN + demangled}")
         return demangled
@@ -613,12 +619,10 @@ class Project(object):
     def set_symbol_map(self, path: str):
         self.map_inpath = assert_file_exists(path)
 
-
-
     def set_entry_function(self, func_symbol: str):
         """Sets the entry function to use. Must have C linkage (extern "C").
 
-         This is necessary for the "-gc-section" compiler flag to work"""
+        This is necessary for the "-gc-section" compiler flag to work"""
         self.entry_function = func_symbol
 
     def set_sda_bases(self, sda: int, sda2: int):
@@ -653,15 +657,15 @@ class Project(object):
     def __get_source_files(self):
         """Adds all source files found the specified folder to the Project for complilation.
         Files within ignore list will be removed."""
-        if (self.auto_import == False):
+        if self.auto_import == False:
             return
         for folder in self.source_folders:
             for file in Path(folder).glob("*.*"):
                 ext = file.suffix
                 file = file.as_posix()
-                if (file in self.ignored_files):
+                if file in self.ignored_files:
                     continue
-                match(ext):
+                match (ext):
                     case ".c":
                         self.add_c_file(file)
                     case ".cpp":
@@ -675,28 +679,28 @@ class Project(object):
             self.add_gecko_file(file)
 
     def add_c_file(self, path: str) -> None:
-        """ Adds the C (.c) file to the Project for compilation."""
+        """Adds the C (.c) file to the Project for compilation."""
         self.c_files.append(assert_file_exists(path))
 
     def add_cpp_file(self, path: str):
-        """ Adds the C++ (.cpp) file to the Project for compilation."""
+        """Adds the C++ (.cpp) file to the Project for compilation."""
         self.cpp_files.append(assert_file_exists(path))
 
     def add_asm_file(self, path: str):
-        """ Adds the ASM (.s) file to the Project for compilation."""
+        """Adds the ASM (.s) file to the Project for compilation."""
         self.asm_files.append(assert_file_exists(path))
 
     def add_gecko_file(self, path: str):
-        """ Adds the Gecko (.txt) file to the Project for compilation."""
+        """Adds the Gecko (.txt) file to the Project for compilation."""
         for child in GeckoCodeTable.from_text(open(path, "r").read()):
             self.gecko_table.add_child(child)
 
     def add_static_library(self, path: str):
-        """ Adds the static library (.a) file to the Project for compilation."""
+        """Adds the static library (.a) file to the Project for compilation."""
         self.static_libs.append(assert_dir_exists(self.library_folders + path))
 
     def ignore_file(self, *paths: str):
-        """ Tells Freighter to not compile these files"""
+        """Tells Freighter to not compile these files"""
         for file in paths:
             self.ignored_files.append(assert_file_exists(file))
 
@@ -707,13 +711,13 @@ class Project(object):
             self.hooks.append(BranchHook(address, symbol))
 
     def hook_branchlink(self, symbol: str, *addresses: int):
-        """ Create branchlink instruction(s) from the given symbol_name's absolute address to
+        """Create branchlink instruction(s) from the given symbol_name's absolute address to
         the address(es) given."""
         for address in addresses:
             self.hooks.append(BranchHook(address, symbol, lk_bit=True))
 
     def hook_pointer(self, symbol: str, *addresses: int):
-        """ Write the given symbol's absolute address to the location of the address(es) given."""
+        """Write the given symbol's absolute address to the location of the address(es) given."""
         for address in addresses:
             self.hooks.append(PointerHook(address, symbol))
 
@@ -727,8 +731,7 @@ class Project(object):
         self.hooks.append(Immediate16Hook(address, symbol_name, modifier))
 
     def hook_immediate12(self, address, w, i, symbol_name: str, modifier):
-        self.hooks.append(Immediate12Hook(
-            address, w, i, symbol_name, modifier))
+        self.hooks.append(Immediate12Hook(address, w, i, symbol_name, modifier))
 
     def __patch_osarena_low(self, dol: DolFile, rom_end: int):
         stack_size = 0x10000
