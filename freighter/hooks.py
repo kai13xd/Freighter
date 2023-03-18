@@ -1,5 +1,5 @@
-from freighter.doltools import *
-from freighter.constants import *
+from .doltools import *
+from .constants import *
 from dolreader.dol import DolFile
 from geckolibs.geckocode import GeckoCommand, Write16, Write32, WriteBranch, WriteString
 
