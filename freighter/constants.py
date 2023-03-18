@@ -1,5 +1,3 @@
-from glob import glob
-from os import remove, removedirs
 from os.path import isdir, isfile
 from pathlib import Path
 from platform import system

@@ -1,10 +1,8 @@
 import re
 import subprocess
-import time
 from collections import defaultdict
 from glob import glob
-from multiprocessing import Process, Queue
-from multiprocessing.context import ProcessError
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from os import listdir, makedirs, remove, removedirs
 from pathlib import Path
 from dolreader.dol import DolFile
@@ -12,8 +10,8 @@ from dolreader.section import DataSection, Section, TextSection
 from elftools.elf.elffile import ELFFile
 from geckolibs.gct import GeckoCodeTable, GeckoCommand
 from os.path import abspath
-from freighter.constants import *
-from freighter.hooks import *
+from .constants import *
+from .hooks import *
 
 
 def delete_file(filepath: str) -> bool:
@@ -147,7 +145,7 @@ class Project(object):
                 print(f'{FLGREEN}Automatically added source folder: {FLCYAN}"{folder}"')
                 self.source_folders.append(folder + "/")
 
-    def compile(self, input: str, output: str, iscpp=False, queue: Queue = None):
+    def compile(self, input: str, output: str, iscpp=False) -> tuple[int, str, str, str]:
         args = []
         if iscpp:
             args = [GPP, "-c"] + self.gpp_args
@@ -156,16 +154,11 @@ class Project(object):
         args += self.common_args
         for path in self.include_folders:
             args.append("-I" + path)
-        args.extend([input, "-o", output])
-        print(f'{COMPILING} "{input}"!')
+        args.extend([input, "-o", output, "-fdiagnostics-color=always"])
+
         process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        _, err = process.communicate()
-        if process.returncode:
-            raise ProcessError(f'\n{ERROR} {FWHITE + input}\n{err.decode("utf-8")}\nFailed to compile source. Fix your code.')
-        else:
-            print(f'{SUCCESS}   "{input}"{FCYAN}')
-            if queue:
-                queue.put(input)
+        out, err = process.communicate()
+        return process.returncode, input, out.decode(), err.decode()
 
     def __link(self):
         print(f"{FLCYAN}Linking...{FYELLOW}")
@@ -181,7 +174,7 @@ class Project(object):
             print(f"{FLMAGENTA}{args}")
         exit_code = subprocess.call(args)
         if exit_code:
-            raise NameError(f'{ERROR}: failed to link object files"\n')
+            raise RuntimeError(f'{ERROR} failed to link object files"\n')
         else:
             print(f"{LINKED}{FLMAGENTA} -> {FLCYAN}{self.temp_dir + self.project_name}.o")
 
@@ -241,7 +234,8 @@ class Project(object):
                         symbol.is_written_to_ld = True
                 f.write("\t}\n\n")
 
-            f.write("ENTRY(" + self.entry_function + ");\n")
+            if self.entry_function:
+                f.write("ENTRY(" + self.entry_function + ");\n")
             if self.static_libs:
                 for path in self.library_folders:
                     f.write(f'SEARCH_DIR("{path}");\n')
@@ -334,6 +328,7 @@ class Project(object):
                             symbol.section = section
 
     # This func looks like booty should clean up later when i feel like it
+    # TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename
     def get_function_symbol(self, line: str):
         if 'extern "C"' in line:
             is_c_linkage = True
@@ -525,7 +520,7 @@ class Project(object):
             badlist = "\n"
             for name in bad_symbols:
                 badlist += f'{FLYELLOW}{name}{FLWHITE} found in {FLCYAN}"{self.symbols[name].source_file}"\n'
-            raise Exception(
+            raise RuntimeError(
                 f"{ERROR} C++Kit could not resolve hook addresses for the given symbols:\n{badlist}\n"
                 f"{FLWHITE}Reasons:{FLRED}\n"
                 f"• The function was optimized out by the compiler for being out of the entry function's scope.\n"
@@ -550,18 +545,32 @@ class Project(object):
         print(f'\n{FLGREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {FLCYAN}"{dol_outpath}"{FLGREEN}!')
 
     def __compile(self):
-        queue = Queue()
-        jobs = list[Process]()
-        for source in self.c_files + self.cpp_files:
-            outpath = self.temp_dir + source.split("/")[-1] + ".o"
-            self.object_files.append(outpath)
-            self.__process_pragmas(source)
-            task = Process(target=self.compile, args=(source, outpath, source.endswith("cpp")))
-            jobs.append(task)
-            task.start()
+        with ProcessPoolExecutor() as executor:
+            tasks = []
+            for source in self.c_files + self.cpp_files:
+                outpath = self.temp_dir + source.split("/")[-1] + ".o"
+                self.object_files.append(outpath)
+                self.__process_pragmas(source)
+                task = executor.submit(self.compile, source, outpath, source.endswith("cpp"))
+                print(f"{COMPILING} {source}")
+                # task = Process(target=self.compile, args=(source, outpath, source.endswith("cpp")))
+                tasks.append(task)
 
-        while any(t.is_alive() for t in jobs):
-            pass
+            halt_compilation = False
+            uncompiled_sources = []
+            for task in as_completed(tasks):
+                exitcode, source, out, err = task.result()
+                if exitcode:
+                    halt_compilation = True
+                    uncompiled_sources.append(source)
+                    print(f'\n{ERROR} failed to compile:{FLYELLOW}\n{err}")')
+                else:
+                    print(f'{SUCCESS} "{source}"{FCYAN}{out}')        
+            if halt_compilation:
+                sourceliststr = ""
+                for source in uncompiled_sources:
+                    sourceliststr += source + "\n"
+                raise SystemExit(f"{FLRED}Build process halted. Please fix code errors for the following files:\n{FLCYAN}" + sourceliststr)
 
     def __process_project(self):
         with open(self.project_objfile, "rb") as f:
