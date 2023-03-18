@@ -1,4 +1,4 @@
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 __author__ = "Kai (@kai13xd)"
 __credits__ = "Yoshi2 (RenolY2) & Minty Meeo"
 

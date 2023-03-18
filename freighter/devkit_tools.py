@@ -188,9 +188,13 @@ class Project(object):
             source_file = file.replace(self.temp_dir, "").rsplit(".", 2)[0]
             with open(file, "r") as f:
                 for line in f.readlines():
+
                     if line.startswith(("0", "8")):
                         line = line[8:]
-                    (type, symbol_name) = line.strip().split(" ")
+                    line = line.strip()
+                    if line == "d": # not sure why a single 'd' gets written on a line to the nm on occasion.
+                        continue
+                    (type, symbol_name) = line.split(" ")
                     type = type.lower()
                     symbol = self.symbols[symbol_name]
                     symbol.name = symbol_name
@@ -730,7 +734,7 @@ class Project(object):
         for address in addresses:
             self.hooks.append(PointerHook(address, symbol))
 
-    def hook_string(self, address, string, encoding="ascii", max_strlen=None):
+    def hook_string(self, string, address, encoding="ascii", max_strlen=None):
         self.hooks.append(StringHook(address, string, encoding, max_strlen))
 
     def hook_file(self, address, filepath, start=0, end=None, max_size=None):
