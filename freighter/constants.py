@@ -42,7 +42,7 @@ def assert_dir_exists(path: str) -> str:
 
 # Default Paths
 DEVKITPPC = ""
-DOLPHIN_MAPS = ""
+DOLPHIN_MAP_DIR = ""
 BUILDDIR = "build/"
 TEMPDIR = "build/temp/"
 PLATFORM = system()
@@ -58,9 +58,6 @@ READELF = ""
 GBD = ""
 CPPFLIT = ""
 
-def set_devkitppc(self, path: str):
-    """Sets the path to where the DevKitPPC bin folder is located."""
-    DEVKITPPC = assert_dir_exists(path)
 
 try:
     if PLATFORM == "Windows":
@@ -84,9 +81,9 @@ except:
 
 try:
     if PLATFORM == "Windows":
-        DOLPHIN_MAPS = assert_dir_exists(str(Path.home()) + "/Documents/Dolphin Emulator/Maps/")
+        DOLPHIN_MAP_DIR = assert_dir_exists(str(Path.home()) + "/Documents/Dolphin Emulator/Maps/")
     elif PLATFORM == "Linux":
-        DOLPHIN_MAPS = assert_dir_exists(str(Path.home()) + "/.local/share/dolphin-emu/Maps/")
+        DOLPHIN_MAP_DIR = assert_dir_exists(str(Path.home()) + "/.local/share/dolphin-emu/Maps/")
     else:
         raise EnvironmentError(f"{PLATFORM} is not a supported environment!")
 except:
