@@ -9,13 +9,13 @@ from dolreader.dol import DolFile
 from dolreader.section import DataSection, Section, TextSection
 from elftools.elf.elffile import ELFFile, SymbolTableSection
 from geckolibs.gct import GeckoCodeTable, GeckoCommand
-from os.path import abspath
 import sys
 from dataclasses import dataclass
 
 from .config import *
 from .constants import *
 from .hooks import *
+
 
 def delete_file(filepath: str) -> bool:
     try:
@@ -33,7 +33,6 @@ def delete_dir(path: str) -> bool:
         return True
     except FileNotFoundError:
         return False
-
 
 
 @dataclass
@@ -66,7 +65,9 @@ class Project:
         self.bin_data: bytearray
         if self.config.project_profile.InputSymbolMap:
             assert_file_exists(self.config.project_profile.InputSymbolMap)
-            self.config.project_profile.SymbolMapOutputPaths = [self.config.user_env.DolphinDocumentsPath + "Maps/" + self.config.project_profile.GameID + ".map"]
+            self.config.project_profile.SymbolMapOutputPaths = [
+                self.config.user_env.DolphinDocumentsPath + "Maps/" + self.config.project_profile.GameID + ".map"
+            ]
         else:
             self.config.project_profile.SymbolMapOutputPaths = [""]
 
@@ -88,16 +89,16 @@ class Project:
     def __get_source_folders(self) -> None:
         if self.config.project_profile.AutoImport == False:
             return
-        source_paths = ["source/", "src/", "code/"]
-        include_paths = ["include/", "includes/", "headers/"]
+        source_paths = ["source\\", "src\\", "code\\"]
+        include_paths = ["include\\", "includes\\", "headers\\"]
 
-        for folder in glob("*", recursive=True):
+        for folder in glob("*/", recursive=True):
             if folder in include_paths:
                 print(f'{FLGREEN}Automatically added include folder: {FLCYAN}"{folder}"')
                 self.config.project_profile.IncludeFolders.append(folder + "/")
             if folder in source_paths and folder not in self.config.project_profile.SourceFolders:
                 print(f'{FLGREEN}Automatically added source folder: {FLCYAN}"{folder}"')
-                self.config.project_profile.SourceFolders.append(folder + "/")
+                self.config.project_profile.SourceFolders.append(folder.rstrip("//") + "/")
 
     def dump_objdump(self, objectfile_path: str, *args: str, outpath: str = ""):
         """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
@@ -178,11 +179,11 @@ class Project:
                     continue
                 match (ext):
                     case ".c":
-                        self.add_c_file(file)
+                        self.c_files.append(file)
                     case ".cpp":
-                        self.add_cpp_file(file)
+                        self.cpp_files.append(file)
                     case ".s":
-                        self.add_asm_file(file)
+                        self.asm_files.append(file)
 
     def __compile(self):
         with ProcessPoolExecutor() as executor:
@@ -456,7 +457,7 @@ class Project:
      
 }"""
             )
-        self.add_linkerscript(linkerscript_file)
+        self.config.project_profile.LinkerScripts.append(linkerscript_file)
 
     def __link(self):
         print(f"{FLCYAN}Linking...{FYELLOW}")
@@ -652,7 +653,9 @@ class Project:
                 for section in insert_index:
                     if section in section_symbols.keys():
                         for symbol in section_symbols[section]:
-                            insert_str = f'  {symbol["address"] - self.config.project_profile.InjectionAddress:08X} {symbol["size"]:06X} {symbol["address"]:08X}  4 '
+                            insert_str = (
+                                f'  {symbol["address"] - self.config.project_profile.InjectionAddress:08X} {symbol["size"]:06X} {symbol["address"]:08X}  4 '
+                            )
                             if symbol["name"] in self.symbols:
                                 symbol = self.symbols[symbol["name"]]
                                 insert_str += f"{symbol.demangled_name}\t {symbol.section} {symbol.source_file} {symbol.library_file}\n"
@@ -667,71 +670,6 @@ class Project:
         if self.config.project_profile.VerboseOutput:
             print(f" 🧼 {FBLUE+ string + FLMAGENTA} -> {FLGREEN + demangled}")
         return demangled
-
-    def set_entry_function(self, func_symbol: str):
-        """Sets the entry function to use. Must have C linkage (extern "C").
-
-        This is necessary for the "-gc-section" compiler flag to work"""
-        self.config.project_profile.EntryFunction = func_symbol
-        self.config.project_profile.LDArgs += ["-gc-sections"]
-
-    def add_symbol_map_output(self, path: str):
-        """Adds the specified path to the list of maps to be."""
-        if not self.config.project_profile.InputSymbolMap:
-            print("This project doesn't define an input symbol map to be processed")
-        self.config.project_profile.SymbolMapOutputPaths.append(path)
-
-    def add_linkerscript(self, path: str):
-        self.config.project_profile.LinkerScripts.append(assert_file_exists(path))
-
-    def add_symbols_folder(self, path: str):
-        """Adds all .txt files found in this folder for Freighter to pull manually defined symbols from."""
-        for file in Path(assert_dir_exists(path)).glob("*.txt"):
-            self.config.project_profile.SymbolsFolder.append(file.as_posix())
-
-    def add_include_folder(self, path: str):
-        """Adds the specified folder as an -I compiler flag
-
-        Note: Folders within the root folder with the following names are automatically added:
-
-        include/
-
-        includes/
-
-        headers/
-        """
-        self.include_folders.append(assert_dir_exists(path))
-
-    def add_gecko_folder(self, path: str):
-        """Adds all Gecko files found in this folder to the Project for complilation."""
-        for file in Path(path).glob("*.txt*"):
-            self.add_gecko_file(file.as_posix())
-
-    def add_c_file(self, path: str) -> None:
-        """Adds the C (.c) file to the Project for compilation."""
-        self.c_files.append(assert_file_exists(path))
-
-    def add_cpp_file(self, path: str):
-        """Adds the C++ (.cpp) file to the Project for compilation."""
-        self.cpp_files.append(assert_file_exists(path))
-
-    def add_asm_file(self, path: str):
-        """Adds the ASM (.s) file to the Project for compilation."""
-        self.asm_files.append(assert_file_exists(path))
-
-    def add_gecko_file(self, path: str):
-        """Adds the Gecko (.txt) file to the Project for compilation."""
-        for child in GeckoCodeTable.from_text(open(path, "r").read()):
-            self.gecko_table.add_child(child)
-
-    def add_static_library(self, path: str):
-        """Adds the static library (.a) file to the Project for compilation."""
-        self.static_libs.append(assert_dir_exists(self.library_folders + path))
-
-    def ignore_file(self, *paths: str):
-        """Tells Freighter to not compile these files"""
-        for file in paths:
-            self.config.project_profile.IgnoredSourceFiles.append(assert_file_exists(file))
 
     def hook_branch(self, symbol: str, *addresses: int):
         """Create branch instruction(s) from the given symbol_name's absolute address to

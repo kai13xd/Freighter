@@ -1,7 +1,6 @@
 import tomllib
 import os
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
 from dacite import from_dict
 from platform import system
 from os.path import isdir, isfile
@@ -24,16 +23,8 @@ def assert_dir_exists(path: str) -> str:
 @dataclass
 class UserEnvironment:
     UseProjectProfile: str = ""
-    DevKitPPCPath: Optional[str] = ""
-    DolphinDocumentsPath: Optional[str] = ""
-
-
-@dataclass
-class CompilerArgs:
-    CommonArgs: Optional[list[str]]
-    GCCArgs: Optional[list[str]]
-    GPPArgs: Optional[list[str]]
-    LDArgs: Optional[list[str]]
+    DevKitPPCPath: str = ""
+    DolphinDocumentsPath: str = ""
 
 
 @dataclass
@@ -42,30 +33,31 @@ class ProjectProfile:
     Name: str
     GameID: str
     InputDolFile: str
-
+    OutputDolFile: str
+    InjectionAddress: int
+    
+    
     # Optional
-    SDA: Optional[int]
-    SDA2: Optional[int]
-    InjectionAddress: Optional[int]
-    SymbolMapOutputPaths: Optional[list[str]]
-    LinkerScripts: Optional[list[str]]
-    IncludeFolders: Optional[list[str]]
-    SourceFolders: Optional[list[str]]
-    CommonArgs: Optional[list[str]]
-    GCCArgs: Optional[list[str]]
-    GPPArgs: Optional[list[str]]
-    LDArgs: Optional[list[str]]
-    IgnoredSourceFiles: Optional[list[str]]
-    OutputDolFile = "build/sys/main.dol"
-    EntryFunction: Optional[str] = ""
-    VerboseOutput: Optional[bool] = False
-    InputSymbolMap: Optional[str] = ""
-    BuildPath: Optional[str] = "build/"
-    TemporaryFilesFolder: str = "build/temp/"
-    GeckoFolder: Optional[str] = "gecko/"
-    SymbolsFolder: Optional[str] = "symbols/"
-    AutoImport: Optional[bool] = True
-    CleanUpTemporaryFiles: Optional[bool] = True
+    SDA: int
+    SDA2: int
+    CommonArgs: list[str]= field(default_factory=list[str])
+    GCCArgs: list[str]= field(default_factory=list[str])
+    GPPArgs: list[str]= field(default_factory=list[str])
+    LDArgs: list[str]= field(default_factory=list[str])
+    IncludeFolders: list[str]= field(default_factory=list[str])
+    SourceFolders: list[str]= field(default_factory=list[str])
+    SymbolMapOutputPaths: list[str]= field(default_factory=list[str])
+    LinkerScripts: list[str] = field(default_factory=list[str])
+    IgnoredSourceFiles: list[str] = field(default_factory=list[str])
+    TemporaryFilesFolder: str = field(default="build/temp/")
+    EntryFunction: str = ""
+    VerboseOutput: bool = False
+    InputSymbolMap: str = ""
+    BuildPath: str = field(default="build/")
+    GeckoFolder: str = field(default="gecko/")
+    SymbolsFolder: str = field(default="symbols/")
+    AutoImport: bool = True
+    CleanUpTemporaryFiles: bool = True
 
 
 class FreighterConfig:
