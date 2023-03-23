@@ -3,18 +3,19 @@ import subprocess
 from collections import defaultdict
 from glob import glob
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from os import listdir, makedirs, remove, removedirs
+from os import makedirs, remove, removedirs
 from pathlib import Path
-from symtable import SymbolTable
 from dolreader.dol import DolFile
 from dolreader.section import DataSection, Section, TextSection
 from elftools.elf.elffile import ELFFile, SymbolTableSection
 from geckolibs.gct import GeckoCodeTable, GeckoCommand
 from os.path import abspath
+import sys
+from dataclasses import dataclass
+
+from .config import *
 from .constants import *
 from .hooks import *
-import sys
-
 
 def delete_file(filepath: str) -> bool:
     try:
@@ -34,36 +35,8 @@ def delete_dir(path: str) -> bool:
         return False
 
 
-def dump_objdump(objectfile_path: str, *args: str, outpath: str = ""):
-    """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
-    args = (OBJDUMP, objectfile_path) + args
-    if not outpath:
-        outpath = TEMPDIR + objectfile_path.split("/")[-1] + ".s"
-    with open(outpath, "w") as f:
-        subprocess.call(args, stdout=f)
-    return outpath
 
-
-def dump_nm(object_path: str, *args: str, outpath: str = ""):
-    """Dumps the output from DevKitPPC's powerpc-eabi-nm.exe to a .txt file"""
-    args = (NM, object_path) + args
-    if not outpath:
-        outpath = TEMPDIR + object_path.split("/")[-1].rstrip(".o") + ".nm"
-    with open(outpath, "w") as f:
-        subprocess.call(args, stdout=f)
-    return outpath
-
-
-def dump_readelf(object_path: str, *args: str, outpath: str = ""):
-    """Dumps the output from DevKitPPC's powerpc-eabi-readelf.exe to a .txt file"""
-    args = (READELF, object_path) + args
-    if not outpath:
-        outpath = TEMPDIR + object_path.split("/")[-1] + ".readelf"
-    with open(outpath, "w") as f:
-        subprocess.call(args, stdout=f)
-    return outpath
-
-
+@dataclass
 class Symbol:
     def __init__(self):
         self.name = ""
@@ -85,40 +58,21 @@ class Symbol:
         self.library_file = ""
 
 
-class Project(object):
-    def __init__(self, name: str, gameid: str, auto_import=True):
-        self.gameid = gameid
-        self.project_name = name
-        self.inject_address = 0
-        self.auto_import = auto_import
-        self.verbose = False
-        self.entry_function: str = ""
-        self.build_dir = BUILDDIR
-        self.temp_dir = TEMPDIR
-        self.dol_inpath: str = ""
-        self.dol_outpath: str = ""
+class Project:
+    def __init__(self, toml_filepath: str):
+        # Default Paths
+        self.config = FreighterConfig(toml_filepath)
         self.dol: DolFile
         self.bin_data: bytearray
-        self.symbols_paths = list[str]()
-        self.linkerscripts = list[str]()
-        self.map_inpath: str = ""
-        if DOLPHIN_MAP_DIR:
-            self.symbol_map_outpaths = [DOLPHIN_MAP_DIR + gameid + ".map"]
+        if self.config.project_profile.InputSymbolMap:
+            assert_file_exists(self.config.project_profile.InputSymbolMap)
+            self.config.project_profile.SymbolMapOutputPaths = [self.config.user_env.DolphinDocumentsPath + "Maps/" + self.config.project_profile.GameID + ".map"]
         else:
-            self.symbol_map_outpaths = [""]
+            self.config.project_profile.SymbolMapOutputPaths = [""]
 
-        self.common_args = list[str]()
-        self.gcc_args = list[str]()
-        self.gpp_args = list[str]()
-        self.project_objfile = self.temp_dir + self.project_name + ".o"
-        self.ld_args = list[str]()
-
-        self.include_folders = list[str]()
-        self.source_folders = list[str]()
         self.library_folders = "/lib/"
-        self.ignored_files = list[str]()
-        self.__get_default_folders()
-
+        self.__get_source_folders()
+        self.project_objfile = self.config.project_profile.BuildPath + self.config.project_profile.Name + ".o"
         self.c_files = list[str]()
         self.cpp_files = list[str]()
         self.asm_files = list[str]()
@@ -126,85 +80,101 @@ class Project(object):
         self.static_libs = list[str]()
         self.hooks = list[Hook]()
 
-        self.gecko_table = GeckoCodeTable(gameid, name)
+        self.gecko_table = GeckoCodeTable(self.config.project_profile.GameID, self.config.project_profile.Name)
         self.gecko_meta = []
         self.symbols = defaultdict(Symbol)
         self.osarena_patcher = None
 
-    def __get_default_folders(self) -> None:
-        if self.auto_import == False:
+    def __get_source_folders(self) -> None:
+        if self.config.project_profile.AutoImport == False:
             return
-        source_paths = ["source", "src", "code"]
-        include_paths = ["include", "includes", "headers"]
+        source_paths = ["source/", "src/", "code/"]
+        include_paths = ["include/", "includes/", "headers/"]
 
         for folder in glob("*", recursive=True):
             if folder in include_paths:
                 print(f'{FLGREEN}Automatically added include folder: {FLCYAN}"{folder}"')
-                self.include_folders.append(folder + "/")
-            if folder in source_paths:
+                self.config.project_profile.IncludeFolders.append(folder + "/")
+            if folder in source_paths and folder not in self.config.project_profile.SourceFolders:
                 print(f'{FLGREEN}Automatically added source folder: {FLCYAN}"{folder}"')
-                self.source_folders.append(folder + "/")
+                self.config.project_profile.SourceFolders.append(folder + "/")
+
+    def dump_objdump(self, objectfile_path: str, *args: str, outpath: str = ""):
+        """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
+        args = (self.config.user_env.DevKitPPCPath + OBJDUMP, objectfile_path) + args
+        if not outpath:
+            outpath = self.config.project_profile.TemporaryFilesFolder + objectfile_path.split("/")[-1] + ".s"
+        with open(outpath, "w") as f:
+            subprocess.call(args, stdout=f)
+        return outpath
+
+    def dump_nm(self, object_path: str, *args: str, outpath: str = ""):
+        """Dumps the output from DevKitPPC's powerpc-eabi-nm.exe to a .txt file"""
+        args = (self.config.user_env.DevKitPPCPath + NM, object_path) + args
+        if not outpath:
+            outpath = self.config.project_profile.TemporaryFilesFolder + object_path.split("/")[-1].rstrip(".o") + ".nm"
+        with open(outpath, "w") as f:
+            subprocess.call(args, stdout=f)
+        return outpath
+
+    def dump_readelf(self, object_path: str, *args: str, outpath: str = ""):
+        """Dumps the output from DevKitPPC's powerpc-eabi-readelf.exe to a .txt file"""
+        args = (self.config.user_env.DevKitPPCPath + READELF, object_path) + args
+        if not outpath:
+            outpath = self.config.project_profile.TemporaryFilesFolder + object_path.split("/")[-1] + ".readelf"
+        with open(outpath, "w") as f:
+            subprocess.call(args, stdout=f)
+        return outpath
 
     def build(
         self,
-        dol_inpath: str,
-        inject_address: int,
-        dol_outpath: str,
-        symbol_map_in_path: str = "",
-        verbose: bool = False,
-        clean_up: bool = False,
     ):
-        self.dol_inpath = dol_inpath
-        self.dol_outpath = dol_outpath
-        self.inject_address = inject_address
-        self.verbose = verbose
-
-        if symbol_map_in_path:
-            self.map_inpath = assert_file_exists(symbol_map_in_path)
-        if not self.symbol_map_outpaths:
-            print(f"{FYELLOW}[Warning] Output path to Dolphin's Maps folder was not found.\n{FWHITE}Use {FGREEN}add_map_output{FWHITE} method.")
-
-        makedirs(self.temp_dir, exist_ok=True)
+        makedirs(self.config.project_profile.TemporaryFilesFolder, exist_ok=True)
         self.__get_source_files()
         self.__compile()
         for object_file in self.object_files:
             self.__find_undefined_cpp_symbols(object_file)
         self.__load_symbol_definitions()
         self.__generate_linkerscript()
+        if self.config.project_profile.SDA and self.config.project_profile.SDA2:
+            self.config.project_profile.CommonArgs += ["-msdata=sysv"]
+            self.config.project_profile.LDArgs += [f"--defsym=_SDA_BASE_={hex(self.config.project_profile.SDA)}"]
+            self.config.project_profile.LDArgs += [f"--defsym=_SDA2_BASE_={hex(self.config.project_profile.SDA2)}"]
         self.__link()
         self.__process_project()
         self.__analyze_final()
         self.__save_symbol_map()
 
-        self.dol = DolFile(open(dol_inpath, "rb"))
-        if self.inject_address == None:
-            self.inject_address = self.dol.lastSection.address + self.dol.lastSection.size
+        self.dol = DolFile(open(self.config.project_profile.InputDolFile, "rb"))
+        if not self.config.project_profile.InjectionAddress:
+            self.config.project_profile.InjectionAddress = self.dol.lastSection.address + self.dol.lastSection.size
             print(
-                f"{FWHITE}Base address auto-set from ROM end: {FLBLUE}{self.inject_address:x}\n"
+                f"{FWHITE}Base address auto-set from ROM end: {FLBLUE}{self.config.project_profile.InjectionAddress:x}\n"
                 f"{FWHITE}Do not rely on this feature if your DOL uses .sbss2\n"
             )
-        if self.inject_address % 32:
+        if self.config.project_profile.InjectionAddress % 32:
             print("Warning!  DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
-        self.bin_data = bytearray(open(self.temp_dir + self.project_name + ".bin", "rb").read())
+        self.bin_data = bytearray(open(self.config.project_profile.TemporaryFilesFolder + self.config.project_profile.Name + ".bin", "rb").read())
         print(f"{FYELLOW}Begin Patching...")
         self.__apply_gecko()
         self.__apply_hooks()
 
-        if clean_up:
+        if self.config.project_profile.CleanUpTemporaryFiles:
             print(f"{FCYAN} Cleaning up temporary files\n")
-            delete_dir(self.temp_dir)
-        print(f'\n{FLGREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {FLCYAN}"{dol_outpath}"{FLGREEN}!')
+            delete_dir(self.config.project_profile.TemporaryFilesFolder)
+        print(f'\n{FLGREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {FLCYAN}"{self.config.project_profile.InputDolFile}"{FLGREEN}!')
 
     def __get_source_files(self):
         """Adds all source files found the specified folder to the Project for complilation.
         Files within ignore list will be removed."""
-        if self.auto_import == False:
+        if self.config.project_profile.AutoImport == False:
             return
-        for folder in self.source_folders:
+        for folder in self.config.project_profile.SourceFolders:
             for file in Path(folder).glob("*.*"):
                 ext = file.suffix
                 file = file.as_posix()
-                if file in self.ignored_files:
+
+                if file in self.config.project_profile.IgnoredSourceFiles:
                     continue
                 match (ext):
                     case ".c":
@@ -218,12 +188,11 @@ class Project(object):
         with ProcessPoolExecutor() as executor:
             tasks = []
             for source in self.c_files + self.cpp_files:
-                outpath = self.temp_dir + source.split("/")[-1] + ".o"
+                outpath = self.config.project_profile.TemporaryFilesFolder + source.split("/")[-1] + ".o"
                 self.object_files.append(outpath)
                 self.__process_pragmas(source)
                 task = executor.submit(self.compile, source, outpath, source.endswith("cpp"))
                 print(f"{COMPILING} {source}")
-                # task = Process(target=self.compile, args=(source, outpath, source.endswith("cpp")))
                 tasks.append(task)
 
             halt_compilation = False
@@ -246,11 +215,11 @@ class Project(object):
     def compile(self, input: str, output: str, is_cpp_file: bool = False) -> tuple[int, str, str, str]:
         args = []
         if is_cpp_file:
-            args = [GPP, "-c"] + self.gpp_args
+            args = [self.config.user_env.DevKitPPCPath + GPP, "-c"] + self.config.project_profile.GPPArgs
         else:
-            args = [GCC, "-c"] + self.gcc_args
-        args += self.common_args
-        for path in self.include_folders:
+            args = [self.config.user_env.DevKitPPCPath + GCC, "-c"] + self.config.project_profile.GCCArgs
+        args += self.config.project_profile.CommonArgs
+        for path in self.config.project_profile.IncludeFolders:
             args.append("-I" + path)
         args.extend([input, "-o", output, "-fdiagnostics-color=always"])
 
@@ -259,9 +228,9 @@ class Project(object):
         return process.returncode, input, out.decode(), err.decode()
 
     def __find_undefined_cpp_symbols(self, object_file: str):
-        nm_file = dump_nm(object_file)
+        nm_file = self.dump_nm(object_file)
         print(f"{FYELLOW}Analyzing NM Output -> {FLCYAN + nm_file}...")
-        source_file = object_file.replace(self.temp_dir, "").rsplit(".", 2)[0]
+        source_file = object_file.replace(self.config.project_profile.TemporaryFilesFolder, "").rsplit(".", 2)[0]
         with open(nm_file, "r") as f:
             for line in f.readlines():
                 if line.startswith(("0", "8")):
@@ -302,9 +271,9 @@ class Project(object):
     def __load_symbol_definitions(self):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
         print(FYELLOW + "Loading manually defined symbols...")
-        for file in self.symbols_paths:
-            lines = open(file, "r").readlines()
-            section = "." + file.split("/")[1].split(".")[0]
+        for file in Path(self.config.project_profile.SymbolsFolder).glob("*.txt"):
+            lines = open(file.as_posix(), "r").readlines()
+            section = "." + file.stem
             for line in lines:
                 line = line.rstrip().partition("//")[0]
                 if line:
@@ -406,12 +375,13 @@ class Project(object):
 
     def __analyze_final(self):
         print(f"{FYELLOW}Dumping objdump...{FCYAN}")
-        dump_objdump(self.project_objfile, "-tSr", "-C")
+        self.dump_objdump(self.project_objfile, "-tSr", "-C")
         self.__find_undefined_cpp_symbols(self.project_objfile)
-        self.__analyze_readelf(dump_readelf(self.project_objfile, "-a", "--wide", "--debug-dump"))
+        self.__analyze_readelf(self.dump_readelf(self.project_objfile, "-a", "--wide", "--debug-dump"))
 
     def __generate_linkerscript(self):
-        with open(self.temp_dir + self.project_name + "_linkerscript.ld", "w") as f:
+        linkerscript_file = self.config.project_profile.TemporaryFilesFolder + self.config.project_profile.Name + "_linkerscript.ld"
+        with open(linkerscript_file, "w") as f:
 
             def write_section(section: str):
                 symbols = [x for x in self.symbols.values() if x.section == section]
@@ -424,8 +394,8 @@ class Project(object):
                         symbol.is_written_to_ld = True
                 f.write("\t}\n\n")
 
-            if self.entry_function:
-                f.write("ENTRY(" + self.entry_function + ");\n")
+            if self.config.project_profile.EntryFunction:
+                f.write("ENTRY(" + self.config.project_profile.EntryFunction + ");\n")
             if self.static_libs:
                 for path in self.library_folders:
                     f.write(f'SEARCH_DIR("{path}");\n')
@@ -445,7 +415,7 @@ class Project(object):
             write_section(".sbss")
             write_section(".sdata2")
             write_section(".sbss2")
-            f.write(f"\t. = 0x{self.inject_address:4x};")
+            f.write(f"\t. = 0x{self.config.project_profile.InjectionAddress:4x};")
             f.write(
                 """    
     /DISCARD/ : 
@@ -486,36 +456,37 @@ class Project(object):
      
 }"""
             )
-        self.add_linkerscript(self.temp_dir + self.project_name + "_linkerscript.ld")
+        self.add_linkerscript(linkerscript_file)
 
     def __link(self):
         print(f"{FLCYAN}Linking...{FYELLOW}")
-        args = [GPP]
-        for arg in self.ld_args:
+        args = [self.config.user_env.DevKitPPCPath + GPP]
+        for arg in self.config.project_profile.LDArgs:
             args.append("-Wl," + arg)
         for file in self.object_files:
             args.append(file)
-        args.extend(self.linkerscripts)
-        args.extend(["-Wl,-Map", f"{self.temp_dir + self.project_name}.map"])
+        for linkerscript in self.config.project_profile.LinkerScripts:
+            args.append("-T" + linkerscript)
+        args.extend(["-Wl,-Map", f"{self.config.project_profile.TemporaryFilesFolder + self.config.project_profile.Name}.map"])
         args.extend(["-o", self.project_objfile])
-        if self.verbose:
+        if self.config.project_profile.VerboseOutput:
             print(f"{FLMAGENTA}{args}")
         exit_code = subprocess.call(args)
         if exit_code:
             raise RuntimeError(f'{ERROR} failed to link object files"\n')
         else:
-            print(f"{LINKED}{FLMAGENTA} -> {FLCYAN}{self.temp_dir + self.project_name}.o")
+            print(f"{LINKED}{FLMAGENTA} -> {FLCYAN}{self.config.project_profile.TemporaryFilesFolder + self.config.project_profile.Name}.o")
 
     def __process_project(self):
         with open(self.project_objfile, "rb") as f:
             elf = ELFFile(f)
-            with open(self.temp_dir + self.project_name + ".bin", "wb") as data:
+            with open(self.config.project_profile.TemporaryFilesFolder + self.config.project_profile.Name + ".bin", "wb") as data:
                 for symbol in elf.iter_sections():
-                    if symbol.header["sh_addr"] < self.inject_address:
+                    if symbol.header["sh_addr"] < self.config.project_profile.InjectionAddress:
                         continue
                     # Filter out sections without SHF_ALLOC attribute
                     if symbol.header["sh_flags"] & 0x2:
-                        data.seek(symbol.header["sh_addr"] - self.inject_address)
+                        data.seek(symbol.header["sh_addr"] - self.config.project_profile.InjectionAddress)
                         data.write(symbol.data())
 
     def __analyze_readelf(self, path: str):
@@ -540,7 +511,7 @@ class Project(object):
                     symbol.hex_address = "0x" + address
                     symbol.address = int(address, 16)
                     symbol.size = int(size)
-                    symbol.library_file = self.project_name + ".o"
+                    symbol.library_file = self.config.project_profile.Name + ".o"
                     if ndx == "ABS":
                         continue
                     symbol.section = section_map[int(ndx)]
@@ -549,7 +520,7 @@ class Project(object):
         for hook in self.hooks:
             hook.resolve(self.symbols)
             hook.apply_dol(self.dol)
-            if self.verbose:
+            if self.config.project_profile.VerboseOutput:
                 print(hook.dump_info())
         print("\n")
         bad_symbols = list[str]()
@@ -569,15 +540,15 @@ class Project(object):
         if len(self.bin_data) > 0:
             new_section: Section
             if len(self.dol.textSections) <= DolFile.MaxTextSections:
-                new_section = TextSection(self.inject_address, self.bin_data)
+                new_section = TextSection(self.config.project_profile.InjectionAddress, self.bin_data)
             elif len(self.dol.dataSections) <= DolFile.MaxDataSections:
-                new_section = DataSection(self.inject_address, self.bin_data)
+                new_section = DataSection(self.config.project_profile.InjectionAddress, self.bin_data)
             else:
                 raise RuntimeError("DOL is full! Cannot allocate any new sections.")
             self.dol.append_section(new_section)
-            self.__patch_osarena_low(self.dol, self.inject_address + len(self.bin_data))
+            self.__patch_osarena_low(self.dol, self.config.project_profile.InjectionAddress + len(self.bin_data))
 
-        with open(self.dol_outpath, "wb") as f:
+        with open(self.config.project_profile.OutputDolFile, "wb") as f:
             self.dol.save(f)
 
     def __apply_gecko(self):
@@ -596,7 +567,7 @@ class Project(object):
                 for gecko_command in gecko_code:
                     if gecko_command.codetype not in SupportedGeckoCodetypes:
                         print(gecko_command)
-            vaddress = self.inject_address + len(self.bin_data)
+            vaddress = self.config.project_profile.InjectionAddress + len(self.bin_data)
             gecko_data = bytearray()
             gecko_meta = []
 
@@ -627,8 +598,11 @@ class Project(object):
         self.gecko_table.apply(self.dol)
 
     def __save_symbol_map(self):
-        if not self.symbol_map_outpaths:
-            print(f"{FLCYAN}No paths found for symbol map output. Skipping.")
+        if not self.config.project_profile.InputSymbolMap:
+            print(f"{FLYELLOW}No input symbol map. Skipping.")
+            return
+        if not self.config.project_profile.SymbolMapOutputPaths:
+            print(f"{FLYELLOW}No paths found for symbol map output. Skipping.")
             return
         print(f"{FLCYAN}Copying symbols to map...")
         with open(self.project_objfile, "rb") as f:
@@ -646,7 +620,7 @@ class Project(object):
                 symbol_data["bind"], symbol_data["type"] = symbol.entry["st_info"].values()
                 if symbol_data["type"] in ["STT_NOTYPE", "STT_FILE"]:
                     continue
-                if symbol.entry["st_value"] < self.inject_address:
+                if symbol.entry["st_value"] < self.config.project_profile.InjectionAddress:
                     continue
                 symbol_data["address"] = symbol.entry["st_value"]
                 symbol_data["size"] = symbol.entry["st_size"]
@@ -658,13 +632,14 @@ class Project(object):
                 if symbol_data["section_index"] in ["SHN_ABS", "SHN_UNDEF"]:
                     continue
                 symbol_data["section"] = index_to_name[symbol.entry["st_shndx"]]
-                print(
-                    f'{FLGREEN + symbol_data["name"]} {FLMAGENTA}@ {hex(symbol_data["address"])} {FLCYAN}({index_to_name[symbol_data["section_index"]]}) {FLGREEN}Size: {str(symbol_data["size"])} bytes {FLYELLOW +symbol_data["bind"]}, {symbol_data["type"]}',
-                    end=" ",
-                )
-                print(f"{FLGREEN}Added")
+                if self.config.project_profile.VerboseOutput:
+                    print(
+                        f'{FLGREEN + symbol_data["name"]} {FLMAGENTA}@ {hex(symbol_data["address"])} {FLCYAN}({index_to_name[symbol_data["section_index"]]}) {FLGREEN}Size: {str(symbol_data["size"])} bytes {FLYELLOW +symbol_data["bind"]}, {symbol_data["type"]}',
+                        end=" ",
+                    )
+                    print(f"{FLGREEN}Added")
                 section_symbols[symbol_data["section"]].append(symbol_data)
-            with open(self.map_inpath, "r+") as f:
+            with open(self.config.project_profile.InputSymbolMap, "r+") as f:
                 contents = f.readlines()
                 insert_index = {}
                 section = ""
@@ -677,19 +652,19 @@ class Project(object):
                 for section in insert_index:
                     if section in section_symbols.keys():
                         for symbol in section_symbols[section]:
-                            insert_str = f'  {symbol["address"] - self.inject_address:08X} {symbol["size"]:06X} {symbol["address"]:08X}  4 '
+                            insert_str = f'  {symbol["address"] - self.config.project_profile.InjectionAddress:08X} {symbol["size"]:06X} {symbol["address"]:08X}  4 '
                             if symbol["name"] in self.symbols:
                                 symbol = self.symbols[symbol["name"]]
                                 insert_str += f"{symbol.demangled_name}\t {symbol.section} {symbol.source_file} {symbol.library_file}\n"
                             contents.insert(insert_index[section] + insert_offset, insert_str)
                             insert_offset += 1
-                for path in self.symbol_map_outpaths:
+                for path in self.config.project_profile.SymbolMapOutputPaths:
                     open(path, "w").writelines(contents)
 
     def demangle(self, string: str):
-        process = subprocess.Popen([CPPFLIT, string], stdout=subprocess.PIPE)
+        process = subprocess.Popen([self.config.user_env.DevKitPPCPath + CPPFLIT, string], stdout=subprocess.PIPE)
         demangled = re.sub("\r\n", "", process.stdout.readline().decode("ascii"))
-        if self.verbose:
+        if self.config.project_profile.VerboseOutput:
             print(f" 🧼 {FBLUE+ string + FLMAGENTA} -> {FLGREEN + demangled}")
         return demangled
 
@@ -697,25 +672,22 @@ class Project(object):
         """Sets the entry function to use. Must have C linkage (extern "C").
 
         This is necessary for the "-gc-section" compiler flag to work"""
-        self.entry_function = func_symbol
-        self.ld_args += ["-gc-sections"]
-
-    def set_sda_bases(self, sda: int, sda2: int):
-        self.common_args += ["-msdata=sysv"]
-        self.ld_args += [f"--defsym=_SDA_BASE_={hex(sda)}"]
-        self.ld_args += [f"--defsym=_SDA2_BASE_={hex(sda2)}"]
+        self.config.project_profile.EntryFunction = func_symbol
+        self.config.project_profile.LDArgs += ["-gc-sections"]
 
     def add_symbol_map_output(self, path: str):
         """Adds the specified path to the list of maps to be."""
-        self.symbol_map_outpaths.append(path)
+        if not self.config.project_profile.InputSymbolMap:
+            print("This project doesn't define an input symbol map to be processed")
+        self.config.project_profile.SymbolMapOutputPaths.append(path)
 
     def add_linkerscript(self, path: str):
-        self.linkerscripts.extend(["-T", assert_file_exists(path)])
+        self.config.project_profile.LinkerScripts.append(assert_file_exists(path))
 
     def add_symbols_folder(self, path: str):
         """Adds all .txt files found in this folder for Freighter to pull manually defined symbols from."""
         for file in Path(assert_dir_exists(path)).glob("*.txt"):
-            self.symbols_paths.append(file.as_posix())
+            self.config.project_profile.SymbolsFolder.append(file.as_posix())
 
     def add_include_folder(self, path: str):
         """Adds the specified folder as an -I compiler flag
@@ -759,7 +731,7 @@ class Project(object):
     def ignore_file(self, *paths: str):
         """Tells Freighter to not compile these files"""
         for file in paths:
-            self.ignored_files.append(assert_file_exists(file))
+            self.config.project_profile.IgnoredSourceFiles.append(assert_file_exists(file))
 
     def hook_branch(self, symbol: str, *addresses: int):
         """Create branch instruction(s) from the given symbol_name's absolute address to
@@ -838,11 +810,11 @@ class Project(object):
         dol.seek(0x800F18CC)
         write_ori(dol, 0, 3, stack_end & 0xFFFF)
 
-        if self.verbose == True:
-            size = rom_end - self.inject_address
+        if self.config.project_profile.VerboseOutput == True:
+            size = rom_end - self.config.project_profile.InjectionAddress
             print(f"{FLCYAN}✨What's new:")
             print(f"{FLBLUE}Mod Size: {FYELLOW}0x{FLYELLOW}{size:x}{FLGREEN} Bytes or {FLYELLOW}~{size/1024:.2f}{FLGREEN} KiBs")
-            print(f"{FLBLUE}Injected @: {HEX}{self.inject_address:x}")
+            print(f"{FLBLUE}Injected @: {HEX}{self.config.project_profile.InjectionAddress:x}")
             print(f"{FLBLUE}Mod End @: {HEX}{rom_end:x}\n")
 
             print(f"{FLBLUE}Stack Moved To: {HEX}{stack_addr:x}")

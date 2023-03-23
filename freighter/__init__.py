@@ -1,8 +1,7 @@
-__version__ = "0.2.5"
+__version__ = "0.3.0"
 __author__ = "Kai (@kai13xd)"
 __credits__ = "Yoshi2 (RenolY2) & Minty Meeo"
 
-from .constants import assert_file_exists, assert_dir_exists
 from .devkit_tools import Project
 from .doltools import *
 from .hooks import *
