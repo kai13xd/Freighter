@@ -1,5 +1,5 @@
 from colorama import Fore, Style, init
-
+from platform import system
 init()
 
 FRED = Fore.RED
@@ -22,6 +22,8 @@ ERROR = f"{FRED}❌ Error:{FLRED}"
 SUCCESS = f"{FLGREEN}✔️ Success!"
 LINKED = f"{FLGREEN}✔️ Linked!"
 HEX = f"{FWHITE}0x{FLWHITE}"
+
+PLATFORM = system()
 
 GPP = "powerpc-eabi-g++.exe"
 GCC = "powerpc-eabi-gcc.exe"

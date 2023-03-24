@@ -1,8 +1,6 @@
 import tomllib
-import os
 from dataclasses import dataclass, field
 from dacite import from_dict
-from platform import system
 from os.path import isdir, isfile, normpath, join
 from pathlib import Path
 from .constants import *
@@ -19,10 +17,6 @@ def assert_dir_exists(path: str) -> str:
         return join(normpath(path), "").replace("\\", "/")
     raise Exception(f"{FLRED}Freighter could not find the folder '{FLCYAN + path + FLRED}'")
 
-
-PLATFORM = system()
-
-
 @dataclass(frozen=True)
 class UserEnvironment:
     DevKitPPCBinFolder: str = field(default="")
@@ -32,11 +26,11 @@ class UserEnvironment:
         if not self.DolphinDocumentsFolder:
             self.find_dolphin_documents_folder()
         else:
-            object.__setattr__(self,"DolphinDocumentsFolder", assert_dir_exists(self.DolphinDocumentsFolder))
+            object.__setattr__(self, "DolphinDocumentsFolder", assert_dir_exists(self.DolphinDocumentsFolder))
         if not self.DevKitPPCBinFolder:
             self.find_dekitppc_bin_folder()
         else:
-            object.__setattr__(self,"DevKitPPCBinFolder", assert_dir_exists(self.DevKitPPCBinFolder))
+            object.__setattr__(self, "DevKitPPCBinFolder", assert_dir_exists(self.DevKitPPCBinFolder))
             assert_file_exists(self.DevKitPPCBinFolder + GPP)
             assert_file_exists(self.DevKitPPCBinFolder + GCC)
             assert_file_exists(self.DevKitPPCBinFolder + LD)
@@ -51,9 +45,9 @@ class UserEnvironment:
     def find_dekitppc_bin_folder(self):
         try:
             if PLATFORM == "Windows":
-                object.__setattr__(self,"DevKitPPCBinFolder", assert_dir_exists("C:/devkitPro/devkitPPC/bin/"))
+                object.__setattr__(self, "DevKitPPCBinFolder", assert_dir_exists("C:/devkitPro/devkitPPC/bin/"))
             elif PLATFORM == "Linux":
-                object.__setattr__(self,"DevKitPPCBinFolder", assert_dir_exists("/opt/devkitpro/devkitPPC/bin/"))
+                object.__setattr__(self, "DevKitPPCBinFolder", assert_dir_exists("/opt/devkitpro/devkitPPC/bin/"))
             else:
                 raise EnvironmentError(f"{PLATFORM} is not a supported environment!")
         except:
@@ -68,9 +62,7 @@ class UserEnvironment:
             else:
                 raise EnvironmentError(f"{PLATFORM} is not a supported environment!")
         except:
-            print(f'{FLYELLOW}[Warning] Could not find your Dolphin Maps folder')
-
-
+            print(f"{FLYELLOW}[Warning] Could not find your Dolphin Maps folder")
 
 
 @dataclass()
@@ -83,8 +75,8 @@ class ProjectProfile:
     InjectionAddress: int
 
     # Optional
-    SDA: int
-    SDA2: int
+    SDA: int = 0
+    SDA2: int = 0
     CommonArgs: list[str] = field(default_factory=list[str])
     GCCArgs: list[str] = field(default_factory=list[str])
     GPPArgs: list[str] = field(default_factory=list[str])

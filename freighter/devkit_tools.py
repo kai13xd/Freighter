@@ -552,6 +552,9 @@ class Project:
             self.dol.save(f)
 
     def __apply_gecko(self):
+        for gecko_txt in Path(self.config.project_profile.GeckoFolder).glob("*.txt*"):
+            for child in GeckoCodeTable.from_text(open(gecko_txt, "r").read()):
+                self.gecko_table.add_child(child)
         while (len(self.bin_data) % 4) != 0:
             self.bin_data += b"\x00"
         print(f"\n{FGREEN}[{FLGREEN}Gecko Codes{FGREEN}]")
