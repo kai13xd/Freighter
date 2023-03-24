@@ -56,9 +56,9 @@ class UserEnvironment:
     def find_dolphin_documents_folder(self):
         try:
             if PLATFORM == "Windows":
-                object.__setattr__(self, "DolphinDocumentsPath", assert_dir_exists(str(Path.home()) + "/Documents/Dolphin Emulator/"))
+                object.__setattr__(self, "DolphinDocumentsFolder", assert_dir_exists(str(Path.home()) + "/Documents/Dolphin Emulator/"))
             elif PLATFORM == "Linux":
-                object.__setattr__(self, "DolphinDocumentsPath", str(Path.home()) + "/.local/share/dolphin-emu/")
+                object.__setattr__(self, "DolphinDocumentsFolder", str(Path.home()) + "/.local/share/dolphin-emu/")
             else:
                 raise EnvironmentError(f"{PLATFORM} is not a supported environment!")
         except:
@@ -109,7 +109,9 @@ class FreighterConfig:
                 self.project_profiles[name] = from_dict(data_class=ProjectProfile, data=profile)
             default_profile_name = tomlconfig["DefaultProjectProfile"]
             self.project_profile = self.project_profiles[default_profile_name]
-        if userenv_toml_filepath:
+        if userenv_toml_filepath and isfile(userenv_toml_filepath):
             with open(assert_file_exists(userenv_toml_filepath), "rb") as f:
                 user_env = tomllib.load(f)
                 self.user_env = from_dict(data_class=UserEnvironment, data=user_env)
+        else:
+            self.user_env = UserEnvironment()
