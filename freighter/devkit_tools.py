@@ -37,36 +37,35 @@ def delete_dir(path: str) -> bool:
 
 @dataclass
 class Symbol:
-    def __init__(self):
-        self.name = ""
-        self.demangled_name = ""
-        self.section = ""
-        self.address = 0
-        self.hex_address = ""
-        self.size = 0
-        self.is_undefined = True
-        self.is_weak = False
-        self.is_function = False
-        self.is_data = False
-        self.is_bss = False
-        self.is_rodata = False
-        self.is_c_linkage = False
-        self.is_manually_defined = False
-        self.is_written_to_ld = False
-        self.source_file = ""
-        self.library_file = ""
+    name = ""
+    demangled_name = ""
+    section = ""
+    address = 0
+    hex_address = ""
+    size = 0
+    is_undefined = True
+    is_weak = False
+    is_function = False
+    is_data = False
+    is_bss = False
+    is_rodata = False
+    is_c_linkage = False
+    is_manually_defined = False
+    is_written_to_ld = False
+    source_file = ""
+    library_file = ""
 
 
 class Project:
-    def __init__(self, toml_filepath: str):
-        # Default Paths
-        self.config = FreighterConfig(toml_filepath)
+    def __init__(self, project_toml_filepath: str, userenv_toml_filepath:str =""):
+
+        self.config = FreighterConfig(project_toml_filepath,userenv_toml_filepath)
         self.dol: DolFile
         self.bin_data: bytearray
         if self.config.project_profile.InputSymbolMap:
             assert_file_exists(self.config.project_profile.InputSymbolMap)
             self.config.project_profile.SymbolMapOutputPaths = [
-                self.config.user_env.DolphinDocumentsPath + "Maps/" + self.config.project_profile.GameID + ".map"
+                self.config.user_env.DolphinDocumentsFolder + "Maps/" + self.config.project_profile.GameID + ".map"
             ]
         else:
             self.config.project_profile.SymbolMapOutputPaths = [""]
@@ -102,7 +101,7 @@ class Project:
 
     def dump_objdump(self, objectfile_path: str, *args: str, outpath: str = ""):
         """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
-        args = (self.config.user_env.DevKitPPCPath + OBJDUMP, objectfile_path) + args
+        args = (self.config.user_env.DevKitPPCBinFolder + OBJDUMP, objectfile_path) + args
         if not outpath:
             outpath = self.config.project_profile.TemporaryFilesFolder + objectfile_path.split("/")[-1] + ".s"
         with open(outpath, "w") as f:
@@ -111,7 +110,7 @@ class Project:
 
     def dump_nm(self, object_path: str, *args: str, outpath: str = ""):
         """Dumps the output from DevKitPPC's powerpc-eabi-nm.exe to a .txt file"""
-        args = (self.config.user_env.DevKitPPCPath + NM, object_path) + args
+        args = (self.config.user_env.DevKitPPCBinFolder + NM, object_path) + args
         if not outpath:
             outpath = self.config.project_profile.TemporaryFilesFolder + object_path.split("/")[-1].rstrip(".o") + ".nm"
         with open(outpath, "w") as f:
@@ -120,7 +119,7 @@ class Project:
 
     def dump_readelf(self, object_path: str, *args: str, outpath: str = ""):
         """Dumps the output from DevKitPPC's powerpc-eabi-readelf.exe to a .txt file"""
-        args = (self.config.user_env.DevKitPPCPath + READELF, object_path) + args
+        args = (self.config.user_env.DevKitPPCBinFolder + READELF, object_path) + args
         if not outpath:
             outpath = self.config.project_profile.TemporaryFilesFolder + object_path.split("/")[-1] + ".readelf"
         with open(outpath, "w") as f:
@@ -216,9 +215,9 @@ class Project:
     def compile(self, input: str, output: str, is_cpp_file: bool = False) -> tuple[int, str, str, str]:
         args = []
         if is_cpp_file:
-            args = [self.config.user_env.DevKitPPCPath + GPP, "-c"] + self.config.project_profile.GPPArgs
+            args = [self.config.user_env.DevKitPPCBinFolder + GPP, "-c"] + self.config.project_profile.GPPArgs
         else:
-            args = [self.config.user_env.DevKitPPCPath + GCC, "-c"] + self.config.project_profile.GCCArgs
+            args = [self.config.user_env.DevKitPPCBinFolder + GCC, "-c"] + self.config.project_profile.GCCArgs
         args += self.config.project_profile.CommonArgs
         for path in self.config.project_profile.IncludeFolders:
             args.append("-I" + path)
@@ -461,7 +460,7 @@ class Project:
 
     def __link(self):
         print(f"{FLCYAN}Linking...{FYELLOW}")
-        args = [self.config.user_env.DevKitPPCPath + GPP]
+        args = [self.config.user_env.DevKitPPCBinFolder + GPP]
         for arg in self.config.project_profile.LDArgs:
             args.append("-Wl," + arg)
         for file in self.object_files:
@@ -665,7 +664,7 @@ class Project:
                     open(path, "w").writelines(contents)
 
     def demangle(self, string: str):
-        process = subprocess.Popen([self.config.user_env.DevKitPPCPath + CPPFLIT, string], stdout=subprocess.PIPE)
+        process = subprocess.Popen([self.config.user_env.DevKitPPCBinFolder + CPPFLIT, string], stdout=subprocess.PIPE)
         demangled = re.sub("\r\n", "", process.stdout.readline().decode("ascii"))
         if self.config.project_profile.VerboseOutput:
             print(f" 🧼 {FBLUE+ string + FLMAGENTA} -> {FLGREEN + demangled}")
