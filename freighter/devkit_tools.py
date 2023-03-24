@@ -64,11 +64,7 @@ class Project:
         self.bin_data: bytearray
         if self.config.project_profile.InputSymbolMap:
             assert_file_exists(self.config.project_profile.InputSymbolMap)
-            self.config.project_profile.SymbolMapOutputPaths = [
-                self.config.user_env.DolphinDocumentsFolder + "Maps/" + self.config.project_profile.GameID + ".map"
-            ]
-        else:
-            self.config.project_profile.SymbolMapOutputPaths = [""]
+            self.config.project_profile.SymbolMapOutputPaths.append(self.config.user_env.DolphinDocumentsFolder + "Maps/" + self.config.project_profile.GameID + ".map")
 
         self.library_folders = "/lib/"
         self.__get_source_folders()
