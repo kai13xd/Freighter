@@ -19,6 +19,7 @@ def assert_dir_exists(path: str) -> str:
 
 @dataclass(frozen=True)
 class UserEnvironment:
+    SelectedProfile: str = field(default="")
     DevKitPPCBinFolder: str = field(default="")
     DolphinDocumentsFolder: str = field(default="")
 
@@ -86,6 +87,7 @@ class ProjectProfile:
     SymbolMapOutputPaths: list[str] = field(default_factory=list[str])
     LinkerScripts: list[str] = field(default_factory=list[str])
     IgnoredSourceFiles: list[str] = field(default_factory=list[str])
+    IgnoredHooks: list[str] = field(default_factory=list[str])
     TemporaryFilesFolder: str = field(default="build/temp/")
     EntryFunction: str = ""
     VerboseOutput: bool = False
@@ -113,5 +115,7 @@ class FreighterConfig:
             with open(assert_file_exists(userenv_toml_filepath), "rb") as f:
                 user_env = tomllib.load(f)
                 self.user_env = from_dict(data_class=UserEnvironment, data=user_env)
+                if self.user_env.SelectedProfile:
+                    self.project_profile = self.project_profiles[self.user_env.SelectedProfile]
         else:
             self.user_env = UserEnvironment()
