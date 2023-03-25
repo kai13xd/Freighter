@@ -57,14 +57,15 @@ class Symbol:
 
 
 class Project:
-    def __init__(self, project_toml_filepath: str, userenv_toml_filepath:str =""):
-
-        self.config = FreighterConfig(project_toml_filepath,userenv_toml_filepath)
+    def __init__(self, project_toml_filepath: str, userenv_toml_filepath: str = ""):
+        self.config = FreighterConfig(project_toml_filepath, userenv_toml_filepath)
         self.dol: DolFile
         self.bin_data: bytearray
         if self.config.project_profile.InputSymbolMap:
             assert_file_exists(self.config.project_profile.InputSymbolMap)
-            self.config.project_profile.SymbolMapOutputPaths.append(self.config.user_env.DolphinDocumentsFolder + "Maps/" + self.config.project_profile.GameID + ".map")
+            self.config.project_profile.SymbolMapOutputPaths.append(
+                self.config.user_env.DolphinDocumentsFolder + "Maps/" + self.config.project_profile.GameID + ".map"
+            )
 
         self.library_folders = "/lib/"
         self.__get_source_folders()
@@ -127,15 +128,15 @@ class Project:
     ):
         makedirs(self.config.project_profile.TemporaryFilesFolder, exist_ok=True)
         self.__get_source_files()
+        if self.config.project_profile.SDA and self.config.project_profile.SDA2:
+            self.config.project_profile.CommonArgs += ["-msdata=sysv"]
+            self.config.project_profile.LDArgs += [f"--defsym=_SDA_BASE_={hex(self.config.project_profile.SDA)}"]
+            self.config.project_profile.LDArgs += [f"--defsym=_SDA2_BASE_={hex(self.config.project_profile.SDA2)}"]
         self.__compile()
         for object_file in self.object_files:
             self.__find_undefined_cpp_symbols(object_file)
         self.__load_symbol_definitions()
         self.__generate_linkerscript()
-        if self.config.project_profile.SDA and self.config.project_profile.SDA2:
-            self.config.project_profile.CommonArgs += ["-msdata=sysv"]
-            self.config.project_profile.LDArgs += [f"--defsym=_SDA_BASE_={hex(self.config.project_profile.SDA)}"]
-            self.config.project_profile.LDArgs += [f"--defsym=_SDA2_BASE_={hex(self.config.project_profile.SDA2)}"]
         self.__link()
         self.__process_project()
         self.__analyze_final()
@@ -235,7 +236,6 @@ class Project:
                 if line == "d":  # not sure why a single 'd' gets written on a line to the nm on occasion.
                     continue
                 (type, symbol_name) = line.split(" ")
-                type = type.lower()
                 symbol = self.symbols[symbol_name]
                 symbol.name = symbol_name
                 if symbol_name.startswith("_Z"):
@@ -244,13 +244,13 @@ class Project:
                 else:
                     symbol.is_c_linkage = True
                     symbol.demangled_name = symbol_name
-                if type == "u":
+                if type in ["u","U","b"]:
                     continue
-                if type == "t":
+                if type == "T":
                     symbol.is_function = True
                 elif type == "v":
                     symbol.is_weak = True
-                elif type == "b":
+                elif type == "B":
                     symbol.is_bss = True
                 elif type == "d":
                     symbol.is_data = True
