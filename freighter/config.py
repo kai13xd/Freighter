@@ -95,7 +95,6 @@ class ProjectProfile:
     BuildPath: str = field(default="build/")
     GeckoFolder: str = field(default="gecko/")
     SymbolsFolder: str = field(default="symbols/")
-    AutoImport: bool = True
     CleanUpTemporaryFiles: bool = True
 
 

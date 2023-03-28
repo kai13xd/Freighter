@@ -68,7 +68,6 @@ class Project:
             self.project.SymbolMapOutputPaths.append(self.user_env.DolphinDocumentsFolder + "Maps/" + self.project.GameID + ".map")
 
         self.library_folders = "/lib/"
-        self.__get_source_folders()
         self.project_objfile = self.project.BuildPath + self.project.Name + ".o"
         self.c_files = list[str]()
         self.cpp_files = list[str]()
@@ -81,20 +80,6 @@ class Project:
         self.gecko_meta = []
         self.symbols = defaultdict(Symbol)
         self.osarena_patcher = None
-
-    def __get_source_folders(self) -> None:
-        if self.project.AutoImport == False:
-            return
-        source_paths = ["source\\", "src\\", "code\\"]
-        include_paths = ["include\\", "includes\\", "headers\\"]
-
-        for folder in glob("*/", recursive=True):
-            if folder in include_paths:
-                print(f'{FLGREEN}Automatically added include folder: {FLCYAN}"{folder}"')
-                self.project.IncludeFolders.append(folder + "/")
-            if folder in source_paths and folder not in self.project.SourceFolders:
-                print(f'{FLGREEN}Automatically added source folder: {FLCYAN}"{folder}"')
-                self.project.SourceFolders.append(folder.rstrip("//") + "/")
 
     def dump_objdump(self, objectfile_path: str, *args: str, outpath: str = ""):
         """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
@@ -164,8 +149,6 @@ class Project:
     def __get_source_files(self):
         """Adds all source files found the specified folder to the Project for complilation.
         Files within ignore list will be removed."""
-        if self.project.AutoImport == False:
-            return
         for folder in self.project.SourceFolders:
             for file in Path(folder).glob("**/*.*"):
                 ext = file.suffix
