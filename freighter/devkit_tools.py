@@ -167,7 +167,7 @@ class Project:
         if self.project.AutoImport == False:
             return
         for folder in self.project.SourceFolders:
-            for file in Path(folder).glob("*.*"):
+            for file in Path(folder).glob("**/*.*"):
                 ext = file.suffix
                 file = file.as_posix()
 
