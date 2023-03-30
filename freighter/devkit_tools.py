@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from .config import *
 from .constants import *
 from .hooks import *
+from functools import cache
 
 
 def delete_file(filepath: str) -> bool:
@@ -33,6 +34,10 @@ def delete_dir(path: str) -> bool:
         return True
     except FileNotFoundError:
         return False
+
+
+def strip_comments(line: str):
+    return line.split("//")[0].strip()
 
 
 @dataclass
@@ -57,31 +62,43 @@ class Symbol:
 
 
 class Project:
+    config: FreighterConfig
+    project: ProjectProfile
+    user_env: UserEnvironment
+    bin_data: bytearray
+    library_folders: str
+    c_files = list[str]()
+    symbols = defaultdict(Symbol)
+    gecko_meta = []
+    cpp_files = list[str]()
+    asm_files = list[str]()
+    object_files = list[str]()
+    static_libs = list[str]()
+    hooks = list[Hook]()
+
     def __init__(self, project_toml_filepath: str, userenv_toml_filepath: str = ""):
         self.config = FreighterConfig(project_toml_filepath, userenv_toml_filepath)
         self.project: ProjectProfile = self.config.project_profile
         self.user_env: UserEnvironment = self.config.user_env
-        self.dol: DolFile
-        self.bin_data: bytearray
+        if not self.project.InjectionAddress:
+            self.project.InjectionAddress = self.dol.lastSection.address + self.dol.lastSection.size
+            print(
+                f"{FWHITE}Base address auto-set from ROM end: {FLBLUE}{self.project.InjectionAddress:x}\n"
+                f"{FWHITE}Do not rely on this feature if your DOL uses .sbss2\n"
+            )
+        if self.project.InjectionAddress % 32:
+            print("Warning!  DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
+        if self.project.SDA and self.project.SDA2:
+            self.project.CommonArgs += ["-msdata=sysv"]
+            self.project.LDArgs += [f"--defsym=_SDA_BASE_={hex(self.project.SDA)}", f"--defsym=_SDA2_BASE_={hex(self.project.SDA2)}"]
         if self.project.InputSymbolMap:
             assert_file_exists(self.project.InputSymbolMap)
             self.project.SymbolMapOutputPaths.append(self.user_env.DolphinDocumentsFolder + "Maps/" + self.project.GameID + ".map")
-
-        self.library_folders = "/lib/"
         self.project_objfile = self.project.BuildPath + self.project.Name + ".o"
-        self.c_files = list[str]()
-        self.cpp_files = list[str]()
-        self.asm_files = list[str]()
-        self.object_files = list[str]()
-        self.static_libs = list[str]()
-        self.hooks = list[Hook]()
-
         self.gecko_table = GeckoCodeTable(self.project.GameID, self.project.Name)
-        self.gecko_meta = []
-        self.symbols = defaultdict(Symbol)
-        self.osarena_patcher = None
+        self.dol = DolFile(open(self.project.InputDolFile, "rb"))
 
-    def dump_objdump(self, objectfile_path: str, *args: str, outpath: str = ""):
+    def dump_objdump(self, objectfile_path: str, *args: str, outpath: str = "") -> str:
         """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
         args = (self.user_env.DevKitPPCBinFolder + OBJDUMP, objectfile_path) + args
         if not outpath:
@@ -90,7 +107,7 @@ class Project:
             subprocess.call(args, stdout=f)
         return outpath
 
-    def dump_nm(self, object_path: str, *args: str, outpath: str = ""):
+    def dump_nm(self, object_path: str, *args: str, outpath: str = "") -> str:
         """Dumps the output from DevKitPPC's powerpc-eabi-nm.exe to a .txt file"""
         args = (self.user_env.DevKitPPCBinFolder + NM, object_path) + args
         if not outpath:
@@ -99,7 +116,7 @@ class Project:
             subprocess.call(args, stdout=f)
         return outpath
 
-    def dump_readelf(self, object_path: str, *args: str, outpath: str = ""):
+    def dump_readelf(self, object_path: str, *args: str, outpath: str = "") -> str:
         """Dumps the output from DevKitPPC's powerpc-eabi-readelf.exe to a .txt file"""
         args = (self.user_env.DevKitPPCBinFolder + READELF, object_path) + args
         if not outpath:
@@ -108,15 +125,10 @@ class Project:
             subprocess.call(args, stdout=f)
         return outpath
 
-    def build(
-        self,
-    ):
+    def build(self) -> None:
         makedirs(self.project.TemporaryFilesFolder, exist_ok=True)
         self.__get_source_files()
-        if self.project.SDA and self.project.SDA2:
-            self.project.CommonArgs += ["-msdata=sysv"]
-            self.project.LDArgs += [f"--defsym=_SDA_BASE_={hex(self.project.SDA)}"]
-            self.project.LDArgs += [f"--defsym=_SDA2_BASE_={hex(self.project.SDA2)}"]
+        self.__process_pragmas()
         self.__compile()
         for object_file in self.object_files:
             self.__find_undefined_cpp_symbols(object_file)
@@ -126,29 +138,16 @@ class Project:
         self.__process_project()
         self.__analyze_final()
         self.__save_symbol_map()
-
-        self.dol = DolFile(open(self.project.InputDolFile, "rb"))
-        if not self.project.InjectionAddress:
-            self.project.InjectionAddress = self.dol.lastSection.address + self.dol.lastSection.size
-            print(
-                f"{FWHITE}Base address auto-set from ROM end: {FLBLUE}{self.project.InjectionAddress:x}\n"
-                f"{FWHITE}Do not rely on this feature if your DOL uses .sbss2\n"
-            )
-        if self.project.InjectionAddress % 32:
-            print("Warning!  DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
         self.bin_data = bytearray(open(self.project.TemporaryFilesFolder + self.project.Name + ".bin", "rb").read())
         print(f"{FYELLOW}Begin Patching...")
         self.__apply_gecko()
         self.__apply_hooks()
-
         if self.project.CleanUpTemporaryFiles:
             print(f"{FCYAN} Cleaning up temporary files\n")
             delete_dir(self.project.TemporaryFilesFolder)
         print(f'\n{FLGREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {FLCYAN}"{self.project.InputDolFile}"{FLGREEN}!')
 
     def __get_source_files(self):
-        """Adds all source files found the specified folder to the Project for complilation.
-        Files within ignore list will be removed."""
         for folder in self.project.SourceFolders:
             for file in Path(folder).glob("**/*.*"):
                 ext = file.suffix
@@ -170,7 +169,6 @@ class Project:
             for source in self.c_files + self.cpp_files:
                 outpath = self.project.TemporaryFilesFolder + source.split("/")[-1] + ".o"
                 self.object_files.append(outpath)
-                self.__process_pragmas(source)
                 task = executor.submit(self.compile, source, outpath, source.endswith("cpp"))
                 print(f"{COMPILING} {source}")
                 tasks.append(task)
@@ -190,7 +188,7 @@ class Project:
                 for source in uncompiled_sources:
                     sourceliststr += source + "\n"
                 print(f"{FLRED}Build process halted. Please fix code errors for the following files:\n{FLCYAN}" + sourceliststr)
-                sys.exit(0)
+                sys.exit(1)
 
     def compile(self, input: str, output: str, is_cpp_file: bool = False) -> tuple[int, str, str, str]:
         args = []
@@ -266,91 +264,91 @@ class Project:
                         symbol.is_manually_defined = True
                         symbol.section = section
 
-    def __get_function_symbol(self, line: str):
-        """This func looks like booty should clean up later when i feel like it
-        TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
-        if 'extern "C"' in line:
-            is_c_linkage = True
-        else:
+    def __get_function_symbol(self, f):
+        """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
+        while True:
+            line = strip_comments(f.readline())
             is_c_linkage = False
-        # line = re.sub(".*[\*>] ",'',line) # remove templates
-        while line.startswith(("*", "&")):  # throw out trailing *'s and &'s
-            line = line[:1]
-        line = re.findall("[A-Za-z0-9_:]*\(.*\)", line)[0]
-
-        if is_c_linkage:
-            return re.sub("\(.*\)", "", line)  # c symbols have no params
-        if "()" in line:
-            return line
-        it = iter(re.findall('(extern "C"|[A-Za-z0-9_]+|[:]+|[<>\(\),*&])', line))
-        chunks = []
-        depth = 0
-        for s in it:
-            if s in ["const", "volatile", "unsigned", "signed"]:
-                chunks.append(s + " ")  # add space
+            if 'extern "C"' in line:
+                is_c_linkage = True
+            if not line:
                 continue
-            if s.isalpha():
-                v = next(it)
-                if depth and v.isalpha():
-                    chunks.append(s)
-                    continue
-                else:
-                    chunks.append(s)
-                    s = v
-            match (s):
-                case "<":
-                    depth += 1
-                case ">":
-                    depth -= 1
-                case ",":
-                    chunks.pop()
-                    chunks.append(", ")
-                    continue
-                case ")":
-                    chunks.pop()
-            chunks.append(s)
-        func = ""
-        for s in chunks:
-            func += s
-            func = func.replace("const char", "char const")  # dumb
-        return func
+            elif "(" in line:
+                # line = re.sub(".*[\*>] ",'',line) # remove templates
+                while line.startswith(("*", "&")):  # throw out trailing *'s and &'s
+                    line = line[:1]
+                line = re.findall("[A-Za-z0-9_:]*\(.*\)", line)[0]
 
-    def __process_pragmas(self, file_path):
-        c_linkage = False
-        with open(file_path, "r", encoding="utf8") as f:
-            while line := f.readline():
-                if line.startswith("#pragma hook"):
-                    branch_type, *addresses = line[13:].split(" ")
-                    while True:  # skip comments and find the next function declaration
-                        line = f.readline()
-                        if not line:
+                if is_c_linkage:
+                    return re.sub("\(.*\)", "", line)  # c symbols have no params
+                if "()" in line:
+                    return line
+                it = iter(re.findall('(extern "C"|[A-Za-z0-9_]+|[:]+|[<>\(\),*&])', line))
+                chunks = []
+                depth = 0
+                for s in it:
+                    if s in ["const", "volatile", "unsigned", "signed"]:
+                        chunks.append(s + " ")  # add space
+                        continue
+                    if s.isalpha():
+                        v = next(it)
+                        if depth and v.isalpha():
+                            chunks.append(s)
                             continue
-                        if line[2:] == "/":
+                        else:
+                            chunks.append(s)
+                            s = v
+                    match (s):
+                        case "<":
+                            depth += 1
+                        case ">":
+                            depth -= 1
+                        case ",":
+                            chunks.pop()
+                            chunks.append(", ")
                             continue
-                        elif "(" in line:
-                            break
-                    func = self.__get_function_symbol(line)
-                    match (branch_type):
-                        case "bl":
-                            for address in addresses:
-                                self.hook_branchlink(func, int(address, 16))
-                        case "b":
-                            for address in addresses:
-                                self.hook_branch(func, int(address, 16))
-                        case _:
-                            raise BaseException(f"\n{ERROR} Wrong branch type given in #pragma hook declaration! {FLBLUE}'{type}'{FLRED} is not supported!")
-                elif line.startswith("#pragma write"):
-                    address = line[14:].strip()
-                    while True:  # skip comments and find the next function declaration
-                        line = f.readline()
-                        if not line:
-                            continue
-                        if line[2:] == "/":
-                            continue
-                        elif "(" in line:
-                            break
-                    func = self.__get_function_symbol(line)
-                    self.hook_pointer(func, int(address, 16))
+                        case ")":
+                            chunks.pop()
+                    chunks.append(s)
+                func = ""
+                for s in chunks:
+                    func += s
+                    func = func.replace("const char", "char const")  # dumb
+                return func
+
+    def __process_pragmas(self):
+        for file in self.cpp_files + self.c_files:
+            with open(file, "r", encoding="utf8") as f:
+                while line := f.readline():
+                    line = strip_comments(line)
+
+                    if line.startswith("#pragma hook"):
+                        branch_type, *addresses = line.removeprefix("#pragma hook").lstrip().split(" ")
+                        function_symbol = self.__get_function_symbol(f)
+                        match (branch_type):
+                            case "bl":
+                                for address in addresses:
+                                    self.hook_branchlink(function_symbol, int(address, 16))
+                            case "b":
+                                for address in addresses:
+                                    self.hook_branch(function_symbol, int(address, 16))
+                            case _:
+                                raise BaseException(f"\n{ERROR} Wrong branch type given in #pragma hook declaration! {FLBLUE}'{type}'{FLRED} is not supported!")
+
+                    elif line.startswith("#pragma inject"):
+                        inject_type, *addresses = line.removeprefix("#pragma inject").lstrip().split(" ")
+                        match (inject_type):
+                            case "pointer":
+                                for address in addresses:
+                                    function_symbol = self.__get_function_symbol(f)
+                                    self.hook_pointer(function_symbol, int(address, 16))
+                            case "string":
+                                for address in addresses:
+                                    inject_string = "" 
+                                    self.hook_string(inject_string, int(address, 16))
+                            case _:
+                                raise BaseException(f"\n{ERROR}Arguments for #pragma inject are incorrect!")
+
 
     def __analyze_final(self):
         print(f"{FYELLOW}Dumping objdump...{FCYAN}")
@@ -502,8 +500,7 @@ class Project:
         for hook in self.hooks:
             hook.resolve(self.symbols)
             hook.apply_dol(self.dol)
-            if self.project.VerboseOutput:
-                print(hook.dump_info())
+            print(hook.dump_info())
         bad_symbols = list[str]()
         for hook in self.hooks:
             if not hook.good and hook.symbol_name not in bad_symbols:
@@ -515,8 +512,8 @@ class Project:
             raise RuntimeError(
                 f"{ERROR} C++Kit could not resolve hook addresses for the given symbols:\n{badlist}\n"
                 f"{FLWHITE}Possible Reasons:{FLRED}\n"
-                f"• The function was optimized out by the compiler for being out of the entry function's scope.\n"
-                f'• Symbol definitions are missing in the {FLCYAN}"symbols"{FLRED} folder.\n\n\n'
+                f"• If an entry function was specified to the linker it's possbile the function was optimized out by the compiler for being outside of the entry function's scope.\n"
+                f'• Symbol definitions were missing in the {FLCYAN}"symbols"{FLRED} folder.\n\n\n'
             )
         if len(self.bin_data) > 0:
             new_section: Section
@@ -645,6 +642,7 @@ class Project:
                 for path in self.project.SymbolMapOutputPaths:
                     open(path, "w").writelines(contents)
 
+    @cache
     def demangle(self, string: str):
         process = subprocess.Popen([self.user_env.DevKitPPCBinFolder + CPPFLIT, string], stdout=subprocess.PIPE)
         demangled = re.sub("\r\n", "", process.stdout.readline().decode("ascii"))
@@ -729,17 +727,16 @@ class Project:
         dol.seek(0x800F18CC)
         write_ori(dol, 0, 3, stack_end & 0xFFFF)
 
-        if self.project.VerboseOutput == True:
-            size = rom_end - self.project.InjectionAddress
-            print(f"{FLCYAN}✨What's new:")
-            print(f"{FLBLUE}Mod Size: {FYELLOW}0x{FLYELLOW}{size:x}{FLGREEN} Bytes or {FLYELLOW}~{size/1024:.2f}{FLGREEN} KiBs")
-            print(f"{FLBLUE}Injected @: {HEX}{self.project.InjectionAddress:x}")
-            print(f"{FLBLUE}Mod End @: {HEX}{rom_end:x}\n")
-
-            print(f"{FLBLUE}Stack Moved To: {HEX}{stack_addr:x}")
-            print(f"{FLBLUE}Stack End @: {HEX}{stack_end:x}")
-            print(f"{FLBLUE}New OSArenaLo: {HEX}{osarena_lo:x}\n")
-
-            print(f"{FLBLUE}Debug Stack Moved to: {HEX}{db_stack_addr:x}")
-            print(f"{FLBLUE}Debug Stack End @: {HEX}{db_stack_end:x}")
-            print(f"{FLBLUE}New Debug OSArenaLo: {HEX}{db_osarena_lo:x}")
+        size = rom_end - self.project.InjectionAddress
+        print(
+            f"{FLCYAN}✨What's new:\n"
+            f"{FLBLUE}Injected Binary Size: {FYELLOW}0x{FLYELLOW}{size:x}{FLGREEN} Bytes or {FLYELLOW}~{size/1024:.2f}{FLGREEN} KiBs\n"
+            f"{FLBLUE}Injection Address @ {HEX}{self.project.InjectionAddress:x}\n"
+            f"{FLBLUE}New ROM End @ {HEX}{rom_end:x}\n"
+            f"{FLBLUE}Stack Moved To: {HEX}{stack_addr:x}"
+            f"{FLBLUE}Stack End @ {HEX}{stack_end:x}\n"
+            f"{FLBLUE}New OSArenaLo @ {HEX}{osarena_lo:x}\n"
+            f"{FLBLUE}Debug Stack Moved To: {HEX}{db_stack_addr:x}\n"
+            f"{FLBLUE}Debug Stack End @ {HEX}{db_stack_end:x}\n"
+            f"{FLBLUE}New Debug OSArenaLo @ {HEX}{db_osarena_lo:x}"
+        )

@@ -21,7 +21,7 @@ COMPILING = f"{FYELLOW}🛠️ Compiling!"
 ERROR = f"{FRED}❌ Error:{FLRED}"
 SUCCESS = f"{FLGREEN}✔️ Success!"
 LINKED = f"{FLGREEN}✔️ Linked!"
-HEX = f"{FWHITE}0x{FLWHITE}"
+HEX = f"{FBLUE}0x{FLCYAN}"
 
 PLATFORM = system()
 
