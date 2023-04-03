@@ -273,6 +273,7 @@ class Project:
 
     def __get_function_symbol(self, f, is_c_symbol:bool):
         """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
+        """Also doesn't account for namespaces that arent in the function signature"""
         while True:
             line = strip_comments(f.readline())
             is_c_linkage = is_c_symbol
@@ -348,7 +349,7 @@ class Project:
                         inject_type, *addresses = line.removeprefix("#pragma inject").lstrip().split(" ")
                         match (inject_type):
                             case "pointer":
-                                function_symbol = self.__get_function_symbol(f)
+                                function_symbol = self.__get_function_symbol(f, is_c_symbol)
                                 for address in addresses:
                                     self.hook_pointer(function_symbol, int(address, 16))
                             case "string":
