@@ -130,6 +130,13 @@ class Project:
         self.__get_source_files()
         self.__process_pragmas()
         self.__compile()
+        # with ProcessPoolExecutor() as executor:
+        #     tasks = []
+        #     for object_file in self.object_files:
+        #         task = executor.submit(self.__find_undefined_cpp_symbols,object_file)
+        #         tasks.append(task)
+        #     for task in as_completed(tasks):
+        #         pass
         for object_file in self.object_files:
             self.__find_undefined_cpp_symbols(object_file)
         self.__load_symbol_definitions()
@@ -264,11 +271,11 @@ class Project:
                         symbol.is_manually_defined = True
                         symbol.section = section
 
-    def __get_function_symbol(self, f):
+    def __get_function_symbol(self, f, is_c_symbol:bool):
         """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
         while True:
             line = strip_comments(f.readline())
-            is_c_linkage = False
+            is_c_linkage = is_c_symbol
             if 'extern "C"' in line:
                 is_c_linkage = True
             if not line:
@@ -318,13 +325,15 @@ class Project:
 
     def __process_pragmas(self):
         for file in self.cpp_files + self.c_files:
+            is_c_symbol = False
+            if file.endswith(".c"):
+                is_c_symbol = True
             with open(file, "r", encoding="utf8") as f:
                 while line := f.readline():
                     line = strip_comments(line)
-
                     if line.startswith("#pragma hook"):
                         branch_type, *addresses = line.removeprefix("#pragma hook").lstrip().split(" ")
-                        function_symbol = self.__get_function_symbol(f)
+                        function_symbol = self.__get_function_symbol(f,is_c_symbol)
                         match (branch_type):
                             case "bl":
                                 for address in addresses:
@@ -339,8 +348,8 @@ class Project:
                         inject_type, *addresses = line.removeprefix("#pragma inject").lstrip().split(" ")
                         match (inject_type):
                             case "pointer":
+                                function_symbol = self.__get_function_symbol(f)
                                 for address in addresses:
-                                    function_symbol = self.__get_function_symbol(f)
                                     self.hook_pointer(function_symbol, int(address, 16))
                             case "string":
                                 for address in addresses:
@@ -448,7 +457,7 @@ class Project:
         args.extend(["-o", self.project_objfile])
         if self.project.VerboseOutput:
             print(f"{FLMAGENTA}{args}")
-        exit_code = subprocess.call(args)
+        exit_code = subprocess.call(args,stdout=subprocess.PIPE)
         if exit_code:
             raise RuntimeError(f'{ERROR} failed to link object files"\n')
         else:
@@ -494,7 +503,8 @@ class Project:
                     symbol.section = section_map[int(ndx)]
 
     def __apply_hooks(self):
-        for hook in self.hooks:
+    
+        for hook in self.hooks.copy():
             if hook.symbol_name and hook.symbol_name in self.project.IgnoredHooks:
                 self.hooks.remove(hook)
         for hook in self.hooks:
