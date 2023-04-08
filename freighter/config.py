@@ -87,6 +87,7 @@ class ProjectProfile:
     SymbolMapOutputPaths: list[str] = field(default_factory=list[str])
     LinkerScripts: list[str] = field(default_factory=list[str])
     IgnoredSourceFiles: list[str] = field(default_factory=list[str])
+    IgnoredGeckoFiles :list[str]= field(default_factory=list[str])
     IgnoredHooks: list[str] = field(default_factory=list[str])
     TemporaryFilesFolder: str = field(default="build/temp/")
     EntryFunction: str = ""

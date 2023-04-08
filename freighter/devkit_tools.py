@@ -271,12 +271,11 @@ class Project:
                         symbol.is_manually_defined = True
                         symbol.section = section
 
-    def __get_function_symbol(self, f, is_c_symbol:bool):
+    def __get_function_symbol(self, f, is_c_linkage:bool = False):
         """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
         """Also doesn't account for namespaces that arent in the function signature"""
         while True:
             line = strip_comments(f.readline())
-            is_c_linkage = is_c_symbol
             if 'extern "C"' in line:
                 is_c_linkage = True
             if not line:
@@ -326,15 +325,15 @@ class Project:
 
     def __process_pragmas(self):
         for file in self.cpp_files + self.c_files:
-            is_c_symbol = False
+            is_c_linkage = False
             if file.endswith(".c"):
-                is_c_symbol = True
+                is_c_linkage = True
             with open(file, "r", encoding="utf8") as f:
                 while line := f.readline():
                     line = strip_comments(line)
                     if line.startswith("#pragma hook"):
                         branch_type, *addresses = line.removeprefix("#pragma hook").lstrip().split(" ")
-                        function_symbol = self.__get_function_symbol(f,is_c_symbol)
+                        function_symbol = self.__get_function_symbol(f,is_c_linkage)
                         match (branch_type):
                             case "bl":
                                 for address in addresses:
@@ -349,7 +348,7 @@ class Project:
                         inject_type, *addresses = line.removeprefix("#pragma inject").lstrip().split(" ")
                         match (inject_type):
                             case "pointer":
-                                function_symbol = self.__get_function_symbol(f, is_c_symbol)
+                                function_symbol = self.__get_function_symbol(f, is_c_linkage)
                                 for address in addresses:
                                     self.hook_pointer(function_symbol, int(address, 16))
                             case "string":
@@ -542,6 +541,8 @@ class Project:
 
     def __apply_gecko(self):
         for gecko_txt in Path(self.project.GeckoFolder).glob("*.txt*"):
+            if gecko_txt.as_posix() in self.project.IgnoredGeckoFiles:
+                continue
             for child in GeckoCodeTable.from_text(open(gecko_txt, "r").read()):
                 self.gecko_table.add_child(child)
         while (len(self.bin_data) % 4) != 0:
