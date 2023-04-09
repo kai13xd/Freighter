@@ -342,8 +342,8 @@ class Project:
                                 for address in addresses:
                                     self.hook_branch(function_symbol, int(address, 16))
                             case _:
-                                raise BaseException(f"\n{ERROR} Wrong branch type given in #pragma hook declaration! {FLBLUE}'{type}'{FLRED} is not supported!")
-
+                                raise BaseException(f"\n{ERROR} Wrong branch type given in #pragma hook declaration! {FLBLUE}'{type}'{FLRED} is not supported!"+
+                                                    f"\nFound in {FLCYAN}{file}{FLRED}")
                     elif line.startswith("#pragma inject"):
                         inject_type, *addresses = line.removeprefix("#pragma inject").lstrip().split(" ")
                         match (inject_type):
@@ -356,7 +356,8 @@ class Project:
                                     inject_string = "" 
                                     self.hook_string(inject_string, int(address, 16))
                             case _:
-                                raise BaseException(f"\n{ERROR}Arguments for #pragma inject are incorrect!")
+                                raise BaseException(f"\n{ERROR}Arguments for #pragma inject are incorrect!"+
+                                                    f"\nFound in {FLCYAN}{file}{FLRED}")
 
 
     def __analyze_final(self):
