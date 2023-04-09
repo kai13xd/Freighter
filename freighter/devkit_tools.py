@@ -48,6 +48,8 @@ class Symbol:
     address = 0
     hex_address = ""
     size = 0
+    is_complete_constructor = False
+    is_base_constructor = False
     is_undefined = True
     is_weak = False
     is_function = False
@@ -215,7 +217,7 @@ class Project:
     def __find_undefined_cpp_symbols(self, object_file: str):
         nm_file = self.dump_nm(object_file)
         print(f"{FYELLOW}Analyzing NM Output -> {FLCYAN + nm_file}...")
-        source_file = object_file.replace(self.project.TemporaryFilesFolder, "").rsplit(".", 2)[0]
+        source_file = object_file.replace(self.project.TemporaryFilesFolder, "").rsplit(".", 1)[0]
         with open(nm_file, "r") as f:
             for line in f.readlines():
                 if line.startswith(("0", "8")):
@@ -228,6 +230,10 @@ class Project:
                 symbol.name = symbol_name
                 if symbol_name.startswith("_Z"):
                     symbol.demangled_name = self.demangle(symbol_name)
+                    if "C1" in symbol_name: # Because Itanium ABI likes emitting two constructors we need to differentiate them
+                        symbol.is_complete_constructor = True
+                    elif "C2" in symbol_name: 
+                        symbol.is_base_constructor = True
                     self.symbols[symbol.demangled_name] = symbol
                 else:
                     symbol.is_c_linkage = True
@@ -377,6 +383,9 @@ class Project:
                 f.write(f"\t{section} ALIGN(0x20):\n\t{{\n")
                 for symbol in symbols:
                     if symbol.is_manually_defined and not symbol.is_written_to_ld:
+                        if not symbol.is_complete_constructor and symbol.is_base_constructor:
+                            constructor_symbol_name = symbol.name.replace("C2","C1")
+                            f.write(f"\t\t{constructor_symbol_name} = {symbol.hex_address};\n")
                         f.write(f"\t\t{symbol.name} = {symbol.hex_address};\n")
                         symbol.is_written_to_ld = True
                 f.write("\t}\n\n")
