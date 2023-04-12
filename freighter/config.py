@@ -11,7 +11,6 @@ def assert_file_exists(path: str) -> str:
         return normpath(path).replace("\\", "/")
     raise Exception(f"{FLRED}Freighter could not find the file: '{FLCYAN + path + FLRED}'")
 
-
 def assert_dir_exists(path: str) -> str:
     if isdir(path):
         return join(normpath(path), "").replace("\\", "/")
@@ -46,7 +45,14 @@ class UserEnvironment:
     def find_dekitppc_bin_folder(self):
         try:
             if PLATFORM == "Windows":
-                object.__setattr__(self, "DevKitPPCBinFolder", assert_dir_exists("C:/devkitPro/devkitPPC/bin/"))
+                path = ""
+                drives = [f'{drive}:' for drive in 'CDEFGHIJKLMNOPQRSTUVWXYZ']
+                for drive in drives:
+                    path = f"{drive}/devkitPro/devkitPPC/bin/"
+                    if isdir(path):
+                        break
+                    else: path = ""
+                object.__setattr__(self, "DevKitPPCBinFolder", assert_dir_exists(path))
             elif PLATFORM == "Linux":
                 object.__setattr__(self, "DevKitPPCBinFolder", assert_dir_exists("/opt/devkitpro/devkitPPC/bin/"))
             else:
@@ -88,7 +94,7 @@ class ProjectProfile:
     LinkerScripts: list[str] = field(default_factory=list[str])
     IgnoredSourceFiles: list[str] = field(default_factory=list[str])
     IgnoredGeckoFiles :list[str]= field(default_factory=list[str])
-    IgnoredHooks: list[str] = field(default_factory=list[str])
+    IgnoreHooks: list[str] = field(default_factory=list[str])
     TemporaryFilesFolder: str = field(default="build/temp/")
     EntryFunction: str = ""
     VerboseOutput: bool = False

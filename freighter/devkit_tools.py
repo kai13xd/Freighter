@@ -331,6 +331,8 @@ class Project:
 
     def __process_pragmas(self):
         for file in self.cpp_files + self.c_files:
+            if file in self.project.IgnoreHooks:
+                continue
             is_c_linkage = False
             if file.endswith(".c"):
                 is_c_linkage = True
@@ -513,10 +515,6 @@ class Project:
                     symbol.section = section_map[int(ndx)]
 
     def __apply_hooks(self):
-    
-        for hook in self.hooks.copy():
-            if hook.symbol_name and hook.symbol_name in self.project.IgnoredHooks:
-                self.hooks.remove(hook)
         for hook in self.hooks:
             hook.resolve(self.symbols)
             hook.apply_dol(self.dol)
