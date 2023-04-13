@@ -656,7 +656,7 @@ class Project:
                             insert_str = f'  {symbol["address"] - self.project.InjectionAddress:08X} {symbol["size"]:06X} {symbol["address"]:08X}  4 '
                             if symbol["name"] in self.symbols:
                                 symbol = self.symbols[symbol["name"]]
-                                insert_str += f"{symbol.demangled_name}\t {symbol.section} {symbol.source_file} {symbol.library_file}\n"
+                                insert_str += f"{symbol.demangled_name}\t {symbol.source_file} {symbol.library_file}\n"
                             contents.insert(insert_index[section] + insert_offset, insert_str)
                             insert_offset += 1
                 for path in self.project.SymbolMapOutputPaths:
