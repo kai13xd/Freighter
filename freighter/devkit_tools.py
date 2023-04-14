@@ -4,6 +4,7 @@ from collections import defaultdict
 from glob import glob
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from os import makedirs, remove, removedirs
+import os
 from pathlib import Path
 from dolreader.dol import DolFile
 from dolreader.section import DataSection, Section, TextSection
@@ -11,7 +12,7 @@ from elftools.elf.elffile import ELFFile, SymbolTableSection
 from geckolibs.gct import GeckoCodeTable, GeckoCommand
 import sys
 from dataclasses import dataclass
-
+from time import time
 from .config import *
 from .constants import *
 from .hooks import *
@@ -61,6 +62,15 @@ class Symbol:
     is_written_to_ld = False
     source_file = ""
     library_file = ""
+
+    def __repr__(self) -> str:
+        if (self.is_c_linkage):
+            return self.name
+        else:
+            return f"{self.demangled_name}"
+
+    def __hash__(self):
+        return hash((self.name, self.demangled_name, self.address, self.address))
 
 
 class Project:
@@ -128,10 +138,14 @@ class Project:
         return outpath
 
     def build(self) -> None:
+        os.system("cls||clear")
+        build_start_time = time()
         makedirs(self.project.TemporaryFilesFolder, exist_ok=True)
         self.__get_source_files()
         self.__process_pragmas()
+        compile_start_time = time()
         self.__compile()
+        self.compile_time = time() - compile_start_time
         self.__load_symbol_definitions()
         self.__generate_linkerscript()
         self.__link()
@@ -143,10 +157,24 @@ class Project:
         self.__apply_gecko()
         self.__apply_hooks()
         if self.project.CleanUpTemporaryFiles:
-            print(f"{FCYAN} Cleaning up temporary files\n")
+            print(f"{FCYAN}Cleaning up temporary files\n")
             delete_dir(self.project.TemporaryFilesFolder)
+        self.build_time = time() - build_start_time
         print(f'\n{FLGREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {FLCYAN}"{self.project.InputDolFile}"{FLGREEN}!')
+        self.__print_extras()
 
+    def __print_extras(self):
+        symbols = list[Symbol]()
+        for symbol in self.symbols.values():
+            symbols.append(symbol)
+        symbols = list(set(symbols))
+        symbols.sort(key=lambda x: x.size, reverse=True)
+        symbols = symbols[:10]
+        print(f"\nTop biggest symbols:")
+        for symbol in symbols:
+            print(f'{FLGREEN}{symbol}{FLCYAN} in "{FLYELLOW}{symbol.source_file}{FLCYAN}" {FLMAGENTA}{symbol.size}{FLGREEN} bytes')
+        print(f"\n{FLCYAN}Compilation Time: {FLMAGENTA}{self.compile_time:.2f} {FLCYAN}seconds")
+        print(f"{FLCYAN}Build Time {FLMAGENTA}{self.build_time:.2f} {FLCYAN}seconds")
     def __get_source_files(self):
         for folder in self.project.SourceFolders:
             for file in Path(folder).glob("**/*.*"):
@@ -222,9 +250,9 @@ class Project:
                 symbol.name = symbol_name
                 if symbol_name.startswith("_Z"):
                     symbol.demangled_name = self.demangle(symbol_name)
-                    if "C1" in symbol_name: # Because Itanium ABI likes emitting two constructors we need to differentiate them
+                    if "C1" in symbol_name:  # Because Itanium ABI likes emitting two constructors we need to differentiate them
                         symbol.is_complete_constructor = True
-                    elif "C2" in symbol_name: 
+                    elif "C2" in symbol_name:
                         symbol.is_base_constructor = True
                     self.symbols[symbol.demangled_name] = symbol
                 else:
@@ -269,7 +297,7 @@ class Project:
                         symbol.is_manually_defined = True
                         symbol.section = section
 
-    def __get_function_symbol(self, f, is_c_linkage:bool = False):
+    def __get_function_symbol(self, f, is_c_linkage: bool = False):
         """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
         """Also doesn't account for namespaces that arent in the function signature"""
         while True:
@@ -333,7 +361,7 @@ class Project:
                     line = strip_comments(line)
                     if line.startswith("#pragma hook"):
                         branch_type, *addresses = line.removeprefix("#pragma hook").lstrip().split(" ")
-                        function_symbol = self.__get_function_symbol(f,is_c_linkage)
+                        function_symbol = self.__get_function_symbol(f, is_c_linkage)
                         match (branch_type):
                             case "bl":
                                 for address in addresses:
@@ -342,8 +370,10 @@ class Project:
                                 for address in addresses:
                                     self.hook_branch(function_symbol, int(address, 16))
                             case _:
-                                raise BaseException(f"\n{ERROR} Wrong branch type given in #pragma hook declaration! {FLBLUE}'{type}'{FLRED} is not supported!"+
-                                                    f"\nFound in {FLCYAN}{file}{FLRED}")
+                                raise BaseException(
+                                    f"\n{ERROR} Wrong branch type given in #pragma hook declaration! {FLBLUE}'{type}'{FLRED} is not supported!"
+                                    + f"\nFound in {FLCYAN}{file}{FLRED}"
+                                )
                     elif line.startswith("#pragma inject"):
                         inject_type, *addresses = line.removeprefix("#pragma inject").lstrip().split(" ")
                         match (inject_type):
@@ -353,12 +383,10 @@ class Project:
                                     self.hook_pointer(function_symbol, int(address, 16))
                             case "string":
                                 for address in addresses:
-                                    inject_string = "" 
+                                    inject_string = ""
                                     self.hook_string(inject_string, int(address, 16))
                             case _:
-                                raise BaseException(f"\n{ERROR}Arguments for #pragma inject are incorrect!"+
-                                                    f"\nFound in {FLCYAN}{file}{FLRED}")
-
+                                raise BaseException(f"\n{ERROR}Arguments for #pragma inject are incorrect!" + f"\nFound in {FLCYAN}{file}{FLRED}")
 
     def __analyze_final(self):
         print(f"{FYELLOW}Dumping objdump...{FCYAN}")
@@ -378,7 +406,7 @@ class Project:
                 for symbol in symbols:
                     if symbol.is_manually_defined and not symbol.is_written_to_ld:
                         if not symbol.is_complete_constructor and symbol.is_base_constructor:
-                            constructor_symbol_name = symbol.name.replace("C2","C1")
+                            constructor_symbol_name = symbol.name.replace("C2", "C1")
                             f.write(f"\t\t{constructor_symbol_name} = {symbol.hex_address};\n")
                         f.write(f"\t\t{symbol.name} = {symbol.hex_address};\n")
                         symbol.is_written_to_ld = True
@@ -461,7 +489,7 @@ class Project:
         args.extend(["-o", self.project_objfile])
         if self.project.VerboseOutput:
             print(f"{FLMAGENTA}{args}")
-        exit_code = subprocess.call(args,stdout=subprocess.PIPE)
+        exit_code = subprocess.call(args, stdout=subprocess.PIPE)
         if exit_code:
             raise RuntimeError(f'{ERROR} failed to link object files"\n')
         else:
@@ -745,7 +773,7 @@ class Project:
             f"{FLBLUE}Injected Binary Size: {FYELLOW}0x{FLYELLOW}{size:x}{FLGREEN} Bytes or {FLYELLOW}~{size/1024:.2f}{FLGREEN} KiBs\n"
             f"{FLBLUE}Injection Address @ {HEX}{self.project.InjectionAddress:x}\n"
             f"{FLBLUE}New ROM End @ {HEX}{rom_end:x}\n"
-            f"{FLBLUE}Stack Moved To: {HEX}{stack_addr:x}"
+            f"{FLBLUE}Stack Moved To: {HEX}{stack_addr:x}\n"
             f"{FLBLUE}Stack End @ {HEX}{stack_end:x}\n"
             f"{FLBLUE}New OSArenaLo @ {HEX}{osarena_lo:x}\n"
             f"{FLBLUE}Debug Stack Moved To: {HEX}{db_stack_addr:x}\n"
