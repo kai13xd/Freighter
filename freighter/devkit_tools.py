@@ -132,15 +132,6 @@ class Project:
         self.__get_source_files()
         self.__process_pragmas()
         self.__compile()
-        # with ProcessPoolExecutor() as executor:
-        #     tasks = []
-        #     for object_file in self.object_files:
-        #         task = executor.submit(self.__find_undefined_cpp_symbols,object_file)
-        #         tasks.append(task)
-        #     for task in as_completed(tasks):
-        #         pass
-        for object_file in self.object_files:
-            self.__find_undefined_cpp_symbols(object_file)
         self.__load_symbol_definitions()
         self.__generate_linkerscript()
         self.__link()
@@ -192,6 +183,7 @@ class Project:
                     print(f'\n{ERROR} failed to compile:{FLYELLOW}\n{err}")')
                 else:
                     print(f'{SUCCESS} "{source}"{FCYAN}{out}')
+                    self.__find_undefined_cpp_symbols(self.project.TemporaryFilesFolder + source.split("/")[-1] + ".o")
             if halt_compilation:
                 sourceliststr = ""
                 for source in uncompiled_sources:
