@@ -17,6 +17,7 @@ from .config import *
 from .constants import *
 from .hooks import *
 from functools import cache
+import hashlib
 
 
 def delete_file(filepath: str) -> bool:
@@ -64,7 +65,7 @@ class Symbol:
     library_file = ""
 
     def __repr__(self) -> str:
-        if (self.is_c_linkage):
+        if self.is_c_linkage:
             return self.name
         else:
             return f"{self.demangled_name}"
@@ -156,14 +157,24 @@ class Project:
         print(f"{FYELLOW}Begin Patching...")
         self.__apply_gecko()
         self.__apply_hooks()
+        self.__patch_osarena_low(self.dol, self.project.InjectionAddress + len(self.bin_data))
+        with open(self.project.OutputDolFile, "wb") as f:
+            self.dol.save(f)
+        self.build_time = time() - build_start_time
+        print(f"\n{FLGREEN}🎊 BUILD COMPLETE 🎊\n" f'Saved .dol to {FLCYAN}"{self.project.OutputDolFile}"{FLGREEN}!')
         if self.project.CleanUpTemporaryFiles:
             print(f"{FCYAN}Cleaning up temporary files\n")
             delete_dir(self.project.TemporaryFilesFolder)
-        self.build_time = time() - build_start_time
-        print(f'\n{FLGREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {FLCYAN}"{self.project.InputDolFile}"{FLGREEN}!')
         self.__print_extras()
 
     def __print_extras(self):
+
+        with open(self.project.OutputDolFile, "rb") as f:
+            md5 = hashlib.file_digest(f, "md5").hexdigest()
+            sha_256 = hashlib.file_digest(f, "sha256").hexdigest()
+            sha_512 = hashlib.file_digest(f, "sha512").hexdigest()
+            print(f"{FLGREEN}MD5: {FLCYAN}{md5}\n{FLGREEN}SHA-256: {FLCYAN}{sha_256}\n{FLGREEN}SHA-512: {FLCYAN}{sha_512}")
+
         symbols = list[Symbol]()
         for symbol in self.symbols.values():
             symbols.append(symbol)
@@ -173,8 +184,10 @@ class Project:
         print(f"\nTop biggest symbols:")
         for symbol in symbols:
             print(f'{FLGREEN}{symbol}{FLCYAN} in "{FLYELLOW}{symbol.source_file}{FLCYAN}" {FLMAGENTA}{symbol.size}{FLGREEN} bytes')
+            
         print(f"\n{FLCYAN}Compilation Time: {FLMAGENTA}{self.compile_time:.2f} {FLCYAN}seconds")
         print(f"{FLCYAN}Build Time {FLMAGENTA}{self.build_time:.2f} {FLCYAN}seconds")
+
     def __get_source_files(self):
         for folder in self.project.SourceFolders:
             for file in Path(folder).glob("**/*.*"):
