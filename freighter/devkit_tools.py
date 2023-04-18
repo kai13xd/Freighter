@@ -168,7 +168,6 @@ class Project:
         self.__print_extras()
 
     def __print_extras(self):
-
         with open(self.project.OutputDolFile, "rb") as f:
             md5 = hashlib.file_digest(f, "md5").hexdigest()
             sha_256 = hashlib.file_digest(f, "sha256").hexdigest()
@@ -184,7 +183,7 @@ class Project:
         print(f"\nTop biggest symbols:")
         for symbol in symbols:
             print(f'{FLGREEN}{symbol}{FLCYAN} in "{FLYELLOW}{symbol.source_file}{FLCYAN}" {FLMAGENTA}{symbol.size}{FLGREEN} bytes')
-            
+
         print(f"\n{FLCYAN}Compilation Time: {FLMAGENTA}{self.compile_time:.2f} {FLCYAN}seconds")
         print(f"{FLCYAN}Build Time {FLMAGENTA}{self.build_time:.2f} {FLCYAN}seconds")
 
@@ -436,6 +435,7 @@ class Project:
                 group = group[:-3]
                 group += ");\n"
                 f.write(group)
+
             f.write("SECTIONS\n{\n")
             write_section(".init")
             write_section(".text")
@@ -446,46 +446,26 @@ class Project:
             write_section(".sbss")
             write_section(".sdata2")
             write_section(".sbss2")
-            f.write(f"\t. = 0x{self.project.InjectionAddress:4x};")
+
+            f.write("\t/DISCARD/ :\n\t{\n")
+            for section in self.project.DiscardSections:
+                f.write(f"\t\t*({section}*);\n")
+            f.write("\n")
+            for lib in self.project.DiscardLibraryObjects:
+                f.write(f"\t\t*{lib}(*);\n")
+            f.write("\t}\n\n")
+
+            f.write(f"\t. = 0x{self.project.InjectionAddress:4x};\n")
             f.write(
-                """    
-    /DISCARD/ : 
-    {
-    *crtbegin.o(*);
-    *crtend.o(*);
-    *(.eh_frame*);
-    *lib_a*(*);
-    *iosupport.o(*);
-    *handle_manager.o(*);
-    *read.o(*);
-    *write.o(*);
-    *lseek.o(*);
-    *close.o(*);
-    *fstat.o(*);
-    *del_op.o(*);
-    *del_opv.o(*)
-    *getpid.o(*);
-    *kill.o(*);
-    *sbrk.o(*);
-    *isatty.o(*);
-    *_exit.o(*);
-    *flock.o(*);
-    *syscall_support.o(*);
-    *(.ctors* );
-    *(.dtors* );
-    *(.init* );
-    *(.fini* );
-    }
-    .sdata  ALIGN(0x20):    { *(.sdata*) }
-	.sbss   ALIGN(0x20):    { *(.sbss*) }
-	.sdata2 ALIGN(0x20):    { *(.sdata2*) }
-	.sbss2  ALIGN(0x20):    { *(.sbss2*) }
-	.rodata ALIGN(0x20):    { *(.rodata*) }
-    .data   ALIGN(0x20):    { *(.data*) }
-	.bss    ALIGN(0x20):    { *(.bss*) }
-    .text   ALIGN(0x20):    { *(.text*) }
-     
-}"""
+                "\t.sdata ALIGN(0x20):\n\t{\n\t\t*(.sdata*)\n\t}\n\n"
+                "\t.sbss ALIGN(0x20):\n\t{\n\t\t*(.sbss*)\n\t}\n\n"
+                "\t.sdata2 ALIGN(0x20):\n\t{\n\t\t*(.sdata2*)\n\t}\n\n"
+                "\t.sbss2 ALIGN(0x20):\n\t{\n\t\t*(.sbss2*)\n\t}\n\n"
+                "\t.rodata ALIGN(0x20):\n\t{\n\t\t*(.rodata*)\n\t}\n\n"
+                "\t.data ALIGN(0x20):\n\t{\n\t\t*(.data*)\n\t}\n\n"
+                "\t.bss ALIGN(0x20):\n\t{\n\t\t*(.bss*)\n\t}\n\n"
+                "\t.text ALIGN(0x20):\n\t{\n\t\t*(.text*)\n\t}\n"
+                "}"
             )
         self.project.LinkerScripts.append(linkerscript_file)
 
