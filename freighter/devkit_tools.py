@@ -555,7 +555,6 @@ class Project:
             else:
                 raise RuntimeError("DOL is full! Cannot allocate any new sections.")
             self.dol.append_section(new_section)
-            self.__patch_osarena_low(self.dol, self.project.InjectionAddress + len(self.bin_data))
 
         with open(self.project.OutputDolFile, "wb") as f:
             self.dol.save(f)
