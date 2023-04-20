@@ -78,7 +78,7 @@ class UserEnvironment:
 @dataclass()
 class ProjectProfile:
     # Required
-    Name: str
+    ProjectName: str
     GameID: str
     InputDolFile: str
     OutputDolFile: str

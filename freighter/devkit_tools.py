@@ -16,6 +16,7 @@ from time import time
 from .config import *
 from .constants import *
 from .hooks import *
+from .filehash import SourceFile
 from functools import cache
 import hashlib
 
@@ -76,29 +77,39 @@ class Symbol:
 
 class Project:
     config: FreighterConfig
-    project: ProjectProfile
+    profile: ProjectProfile
     user_env: UserEnvironment
-    bin_data: bytearray
-    library_folders: str
-    c_files = list[str]()
-    symbols = defaultdict(Symbol)
-    gecko_meta = []
-    cpp_files = list[str]()
-    asm_files = list[str]()
-    object_files = list[str]()
-    static_libs = list[str]()
-    hooks = list[Hook]()
 
     def __init__(self, project_toml_filepath: str, userenv_toml_filepath: str = ""):
-        self.config = FreighterConfig(project_toml_filepath, userenv_toml_filepath)
-        self.project: ProjectProfile = self.config.project_profile
-        self.user_env: UserEnvironment = self.config.user_env
+        # Class variables
+        Project.config = FreighterConfig(project_toml_filepath, userenv_toml_filepath)
+        Project.profile: ProjectProfile = Project.config.project_profile
+        Project.user_env: UserEnvironment = Project.config.user_env
+
+        # Assign as instance variable because spawning subprocesses dont have access to class variables?
+        self.config = Project.config
+        self.project = Project.profile
+        self.user_env = Project.user_env
+
+        # Instance variables
+        self.bin_data: bytearray
+        self.library_folders: str
+        self.symbols = defaultdict(Symbol)
+        self.gecko_meta = []
+        self.c_files = list[SourceFile]()
+        self.cpp_files = list[SourceFile]()
+        # self.asm_files = list[SourceFile]()
+        self.object_files = list[str]()
+        self.static_libs = list[str]()
+        self.hooks = list[Hook]()
+
         if not self.project.InjectionAddress:
             self.project.InjectionAddress = self.dol.lastSection.address + self.dol.lastSection.size
             print(
                 f"{FWHITE}Base address auto-set from ROM end: {FLBLUE}{self.project.InjectionAddress:x}\n"
                 f"{FWHITE}Do not rely on this feature if your DOL uses .sbss2\n"
             )
+
         if self.project.InjectionAddress % 32:
             print("Warning!  DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
         if self.project.SDA and self.project.SDA2:
@@ -107,8 +118,8 @@ class Project:
         if self.project.InputSymbolMap:
             assert_file_exists(self.project.InputSymbolMap)
             self.project.SymbolMapOutputPaths.append(self.user_env.DolphinDocumentsFolder + "Maps/" + self.project.GameID + ".map")
-        self.project_objfile = self.project.BuildPath + self.project.Name + ".o"
-        self.gecko_table = GeckoCodeTable(self.project.GameID, self.project.Name)
+        self.project_objfile = self.project.BuildPath + self.project.ProjectName + ".o"
+        self.gecko_table = GeckoCodeTable(self.project.GameID, self.project.ProjectName)
         self.dol = DolFile(open(self.project.InputDolFile, "rb"))
 
     def dump_objdump(self, objectfile_path: str, *args: str, outpath: str = "") -> str:
@@ -142,10 +153,12 @@ class Project:
         os.system("cls||clear")
         build_start_time = time()
         makedirs(self.project.TemporaryFilesFolder, exist_ok=True)
+        SourceFile.load_filehashes()
         self.__get_source_files()
         self.__process_pragmas()
         compile_start_time = time()
         self.__compile()
+        SourceFile.save_filehashes()
         self.compile_time = time() - compile_start_time
         self.__load_symbol_definitions()
         self.__generate_linkerscript()
@@ -153,7 +166,7 @@ class Project:
         self.__process_project()
         self.__analyze_final()
         self.__save_symbol_map()
-        self.bin_data = bytearray(open(self.project.TemporaryFilesFolder + self.project.Name + ".bin", "rb").read())
+        self.bin_data = bytearray(open(self.project.TemporaryFilesFolder + self.project.ProjectName + ".bin", "rb").read())
         print(f"{FYELLOW}Begin Patching...")
         self.__apply_gecko()
         self.__apply_hooks()
@@ -189,66 +202,64 @@ class Project:
 
     def __get_source_files(self):
         for folder in self.project.SourceFolders:
-            for file in Path(folder).glob("**/*.*"):
-                ext = file.suffix
-                file = file.as_posix()
-
-                if file in self.project.IgnoredSourceFiles:
+            for file in glob(f"{folder}/**/**.c", recursive=True):
+                if file.replace("\\", "/") in self.project.IgnoredSourceFiles:
                     continue
-                match (ext):
-                    case ".c":
-                        self.c_files.append(file)
-                    case ".cpp":
-                        self.cpp_files.append(file)
-                    case ".s":
-                        self.asm_files.append(file)
+                self.c_files.append(SourceFile(Path(file)))
+            for file in glob(f"{folder}/**/**.cpp", recursive=True):
+                if file.replace("\\", "/") in self.project.IgnoredSourceFiles:
+                    continue
+                self.cpp_files.append(SourceFile(Path(file)))
 
     def __compile(self):
         with ProcessPoolExecutor() as executor:
             tasks = []
-            for source in self.c_files + self.cpp_files:
-                outpath = self.project.TemporaryFilesFolder + source.split("/")[-1] + ".o"
-                self.object_files.append(outpath)
-                task = executor.submit(self.compile, source, outpath, source.endswith("cpp"))
-                print(f"{COMPILING} {source}")
-                tasks.append(task)
+            for source_file in self.c_files + self.cpp_files:
+                object_file = f"{self.project.TemporaryFilesFolder}{source_file.name}.o"
+                self.object_files.append(object_file)
+
+                if source_file.needs_recompile():
+                    task = executor.submit(self.compile, source_file, object_file)
+                    print(f"{COMPILING} {source_file}")
+                    tasks.append(task)
+                else:
+                    self.__find_undefined_cpp_symbols(object_file)
 
             halt_compilation = False
             uncompiled_sources = []
             for task in as_completed(tasks):
-                exitcode, source, out, err = task.result()
+                exitcode, source_file, out, err = task.result()
                 if exitcode:
                     halt_compilation = True
-                    uncompiled_sources.append(source)
+                    uncompiled_sources.append(source_file)
                     print(f'\n{ERROR} failed to compile:{FLYELLOW}\n{err}")')
                 else:
-                    print(f'{SUCCESS} "{source}"{FCYAN}{out}')
-                    self.__find_undefined_cpp_symbols(self.project.TemporaryFilesFolder + source.split("/")[-1] + ".o")
+                    print(f'{SUCCESS} "{source_file}"{FCYAN}{out}')
+                    self.__find_undefined_cpp_symbols(f"{self.project.TemporaryFilesFolder}{source_file.name}.o")
             if halt_compilation:
-                sourceliststr = ""
-                for source in uncompiled_sources:
-                    sourceliststr += source + "\n"
-                print(f"{FLRED}Build process halted. Please fix code errors for the following files:\n{FLCYAN}" + sourceliststr)
-                sys.exit(1)
+                source_file_error = ""
+                for source_file in uncompiled_sources:
+                    source_file_error += source_file.relative_path + "\n"
+                raise Exception(f"{FLRED}Build process halted. Please fix code errors for the following files:\n{FLCYAN}" + source_file_error)
 
-    def compile(self, input: str, output: str, is_cpp_file: bool = False) -> tuple[int, str, str, str]:
+    def compile(self, source_file: SourceFile, output: str) -> tuple[int, SourceFile, str, str]:
         args = []
-        if is_cpp_file:
+        if source_file.extension == ".cpp":
             args = [self.user_env.DevKitPPCBinFolder + GPP, "-c"] + self.project.GPPArgs
         else:
             args = [self.user_env.DevKitPPCBinFolder + GCC, "-c"] + self.project.GCCArgs
         args += self.project.CommonArgs
         for path in self.project.IncludeFolders:
             args.append("-I" + path)
-        args.extend([input, "-o", output, "-fdiagnostics-color=always"])
+        args.extend([source_file.relative_path, "-o", output, "-fdiagnostics-color=always"])
 
         process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = process.communicate()
-        return process.returncode, input, out.decode(), err.decode()
+        return process.returncode, source_file, out.decode(), err.decode()
 
     def __find_undefined_cpp_symbols(self, object_file: str):
         nm_file = self.dump_nm(object_file)
-        print(f"{FYELLOW}Analyzing NM Output -> {FLCYAN + nm_file}...")
+        print(f"{FYELLOW}Analyzing NM Output -> {FLCYAN + nm_file}")
         source_file = object_file.replace(self.project.TemporaryFilesFolder, "").rsplit(".", 1)[0]
         with open(nm_file, "r") as f:
             for line in f.readlines():
@@ -362,13 +373,13 @@ class Project:
                 return func
 
     def __process_pragmas(self):
-        for file in self.cpp_files + self.c_files:
-            if file in self.project.IgnoreHooks:
+        for source_file in self.cpp_files + self.c_files:
+            if source_file in self.project.IgnoreHooks:
                 continue
             is_c_linkage = False
-            if file.endswith(".c"):
+            if source_file.extension == ".c":
                 is_c_linkage = True
-            with open(file, "r", encoding="utf8") as f:
+            with open(source_file, "r", encoding="utf8") as f:
                 while line := f.readline():
                     line = strip_comments(line)
                     if line.startswith("#pragma hook"):
@@ -384,7 +395,7 @@ class Project:
                             case _:
                                 raise BaseException(
                                     f"\n{ERROR} Wrong branch type given in #pragma hook declaration! {FLBLUE}'{type}'{FLRED} is not supported!"
-                                    + f"\nFound in {FLCYAN}{file}{FLRED}"
+                                    + f"\nFound in {FLCYAN}{source_file}{FLRED}"
                                 )
                     elif line.startswith("#pragma inject"):
                         inject_type, *addresses = line.removeprefix("#pragma inject").lstrip().split(" ")
@@ -398,7 +409,7 @@ class Project:
                                     inject_string = ""
                                     self.hook_string(inject_string, int(address, 16))
                             case _:
-                                raise BaseException(f"\n{ERROR}Arguments for #pragma inject are incorrect!" + f"\nFound in {FLCYAN}{file}{FLRED}")
+                                raise BaseException(f"\n{ERROR}Arguments for #pragma inject are incorrect!" + f"\nFound in {FLCYAN}{source_file}{FLRED}")
 
     def __analyze_final(self):
         print(f"{FYELLOW}Dumping objdump...{FCYAN}")
@@ -407,7 +418,7 @@ class Project:
         self.__analyze_readelf(self.dump_readelf(self.project_objfile, "-a", "--wide", "--debug-dump"))
 
     def __generate_linkerscript(self):
-        linkerscript_file = self.project.TemporaryFilesFolder + self.project.Name + "_linkerscript.ld"
+        linkerscript_file = self.project.TemporaryFilesFolder + self.project.ProjectName + "_linkerscript.ld"
         with open(linkerscript_file, "w") as f:
 
             def write_section(section: str):
@@ -478,7 +489,7 @@ class Project:
             args.append(file)
         for linkerscript in self.project.LinkerScripts:
             args.append("-T" + linkerscript)
-        args.extend(["-Wl,-Map", f"{self.project.TemporaryFilesFolder + self.project.Name}.map"])
+        args.extend(["-Wl,-Map", f"{self.project.TemporaryFilesFolder + self.project.ProjectName}.map"])
         args.extend(["-o", self.project_objfile])
         if self.project.VerboseOutput:
             print(f"{FLMAGENTA}{args}")
@@ -486,12 +497,12 @@ class Project:
         if exit_code:
             raise RuntimeError(f'{ERROR} failed to link object files"\n')
         else:
-            print(f"{LINKED}{FLMAGENTA} -> {FLCYAN}{self.project.TemporaryFilesFolder + self.project.Name}.o")
+            print(f"{LINKED}{FLMAGENTA} -> {FLCYAN}{self.project.TemporaryFilesFolder + self.project.ProjectName}.o")
 
     def __process_project(self):
         with open(self.project_objfile, "rb") as f:
             elf = ELFFile(f)
-            with open(self.project.TemporaryFilesFolder + self.project.Name + ".bin", "wb") as data:
+            with open(self.project.TemporaryFilesFolder + self.project.ProjectName + ".bin", "wb") as data:
                 for symbol in elf.iter_sections():
                     if symbol.header["sh_addr"] < self.project.InjectionAddress:
                         continue
@@ -522,7 +533,7 @@ class Project:
                     symbol.hex_address = "0x" + address
                     symbol.address = int(address, 16)
                     symbol.size = int(size)
-                    symbol.library_file = self.project.Name + ".o"
+                    symbol.library_file = self.project.ProjectName + ".o"
                     if ndx == "ABS":
                         continue
                     symbol.section = section_map[int(ndx)]
@@ -541,7 +552,7 @@ class Project:
             for name in bad_symbols:
                 badlist += f'{FLYELLOW}{name}{FLWHITE} found in {FLCYAN}"{self.symbols[name].source_file}"\n'
             raise RuntimeError(
-                f"{ERROR} C++Kit could not resolve hook addresses for the given symbols:\n{badlist}\n"
+                f"{ERROR} Freighter could not resolve hook addresses for the given symbols:\n{badlist}\n"
                 f"{FLWHITE}Possible Reasons:{FLRED}\n"
                 f"• If an entry function was specified to the linker it's possbile the function was optimized out by the compiler for being outside of the entry function's scope.\n"
                 f'• Symbol definitions were missing in the {FLCYAN}"symbols"{FLRED} folder.\n\n\n'

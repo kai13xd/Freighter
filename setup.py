@@ -29,6 +29,6 @@ setuptools.setup(
         "Environment :: Console",
         "Operating System :: Microsoft :: Windows",
     ],
-    install_requires=("colorama", "dacite", "dolreader", "pyelftools", "geckolibs"),
+    install_requires=("colorama", "dacite", "dolreader", "jsonpickle", "pyelftools", "geckolibs"),
     python_requires=">=3.11",
 )
