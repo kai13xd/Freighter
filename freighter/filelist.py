@@ -18,6 +18,7 @@ class File(PathLike):
         path = Path(path)
         self.is_dirty = False
         self.relative_path = path.as_posix()
+        self.sha256hash = ""
         if self.exists():
             self.calculate_hash()
             if self.is_hash_same():
@@ -179,9 +180,9 @@ class SourceFile(File):
 class ObjectFile(File):
     def __init__(self, path: str | Path) -> None:
         path = Path(path)
-        super().__init__(path)
         self.symbols = dict[str, Symbol]()
         self.source_file_name = path.stem
+        super().__init__(path)
 
     def add_symbol(self, symbol: Symbol):
         self.symbols[symbol.demangled_name] = symbol
