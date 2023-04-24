@@ -1,5 +1,6 @@
 from colorama import Fore, Style, init
 from platform import system
+
 init()
 
 FRED = Fore.RED
@@ -35,3 +36,6 @@ NM = "powerpc-eabi-gcc-nm.exe"
 READELF = "powerpc-eabi-readelf.exe"
 GBD = "powerpc-eabi-gdb.exe"
 CPPFLIT = "powerpc-eabi-c++filt.exe"
+
+DEFAULT_CONFIG_PATH = "ProjectConfig.toml"
+DEFAULT_USERENV_PATH = "UserEnv.toml"

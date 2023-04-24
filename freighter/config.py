@@ -111,22 +111,40 @@ class ProjectProfile:
 
 
 class FreighterConfig:
-    project_profile: ProjectProfile
+    project: ProjectProfile
     user_env: UserEnvironment
-    project_profiles = dict[str, ProjectProfile]()
+    config_path: str
 
-    def __init__(self, project_toml_filepath: str, userenv_toml_filepath: str = "") -> None:
-        with open(assert_file_exists(project_toml_filepath), "rb") as f:
+    def __init__(self, project_toml_path: str = "", userenv_toml_path: str = "") -> None:
+        self.project_profiles = dict[str, ProjectProfile]()
+
+        if not project_toml_path:
+            FreighterConfig.config_path = assert_file_exists(DEFAULT_CONFIG_PATH)
+
+        if not userenv_toml_path:
+            userenv_toml_path = assert_file_exists(DEFAULT_USERENV_PATH)
+
+        with open(FreighterConfig.config_path, "rb") as f:
             tomlconfig = tomllib.load(f)
             for name, profile in tomlconfig["ProjectProfile"].items():
                 self.project_profiles[name] = from_dict(data_class=ProjectProfile, data=profile)
             default_profile_name = tomlconfig["DefaultProjectProfile"]
-            self.project_profile = self.project_profiles[default_profile_name]
-        if userenv_toml_filepath and isfile(userenv_toml_filepath):
-            with open(assert_file_exists(userenv_toml_filepath), "rb") as f:
+            FreighterConfig.project = self.project_profiles[default_profile_name]
+
+        if userenv_toml_path:
+            with open(userenv_toml_path, "rb") as f:
                 user_env = tomllib.load(f)
-                self.user_env = from_dict(data_class=UserEnvironment, data=user_env)
+                FreighterConfig.user_env = from_dict(data_class=UserEnvironment, data=user_env)
                 if self.user_env.SelectedProfile:
-                    self.project_profile = self.project_profiles[self.user_env.SelectedProfile]
+                    FreighterConfig.project = self.project_profiles[self.user_env.SelectedProfile]
         else:
-            self.user_env = UserEnvironment()
+            FreighterConfig.user_env = UserEnvironment()
+
+        from .filelist import FileList, File
+
+        FileList.init()
+        File(FreighterConfig.config_path)
+
+
+# Singleton init
+FreighterConfig()
