@@ -69,6 +69,7 @@ class Project:
         self.static_libs = list[str]()
         self.hooks = list[Hook]()
         self.compile_time = 0
+        self.demangler_process = None
         if not self.project.InjectionAddress:
             self.project.InjectionAddress = self.dol.lastSection.address + self.dol.lastSection.size
             print(
@@ -665,10 +666,17 @@ class Project:
 
     @cache
     def demangle(self, string: str) -> str:
-        process = subprocess.Popen([self.user_env.DevKitPPCBinFolder + CPPFLIT, string], stdout=subprocess.PIPE)
-        demangled = process.stdout.readline().decode("ascii").rstrip()
+        if not self.demangler_process:
+            self.demangler_process = subprocess.Popen(
+                [self.user_env.DevKitPPCBinFolder + CPPFLIT], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+
+        self.demangler_process.stdin.write(f"{string}\n".encode())
+        self.demangler_process.stdin.flush()
+
+        demangled = self.demangler_process.stdout.readline().decode().rstrip()
         if self.project.VerboseOutput:
             print(f" 🧼 {FBLUE+ string + FLMAGENTA} -> {FLGREEN + demangled}")
+
         return demangled
 
     def hook_branch(self, symbol: str, *addresses: int):
