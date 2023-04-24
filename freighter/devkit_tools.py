@@ -272,7 +272,10 @@ class Project:
                     symbol.is_absolute = True
                 symbol.is_undefined = False
                 if not symbol.source_file:
-                    symbol.source_file = object_file.relative_path
+                    if object_file.source_file_name == self.project.ProjectName:
+                        symbol.source_file = ""  # Temporary workaround for symbols sourced from external libs
+                    else:
+                        symbol.source_file = object_file.source_file_name
 
     def __load_symbol_definitions(self):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
@@ -667,8 +670,7 @@ class Project:
     @cache
     def demangle(self, string: str) -> str:
         if not self.demangler_process:
-            self.demangler_process = subprocess.Popen(
-                [self.user_env.DevKitPPCBinFolder + CPPFLIT], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            self.demangler_process = subprocess.Popen([self.user_env.DevKitPPCBinFolder + CPPFLIT], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
         self.demangler_process.stdin.write(f"{string}\n".encode())
         self.demangler_process.stdin.flush()

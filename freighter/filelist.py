@@ -178,8 +178,10 @@ class SourceFile(File):
 
 class ObjectFile(File):
     def __init__(self, path: str | Path) -> None:
+        path = Path(path)
+        super().__init__(path)
         self.symbols = dict[str, Symbol]()
-        File.__init__(self, path)
+        self.source_file_name = path.stem
 
     def add_symbol(self, symbol: Symbol):
         self.symbols[symbol.demangled_name] = symbol
