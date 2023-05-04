@@ -174,7 +174,7 @@ class SourceFile(File):
                         else:
                             resolved_path = ""
                     if not resolved_path:
-                        raise Exception(f"Could not find include file found in {include_path}")
+                        raise Exception(f"Could not find include file found in {include_path} for {self.relative_path}")
 
 
 class ObjectFile(File):
