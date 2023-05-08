@@ -174,7 +174,7 @@ class SourceFile(File):
                         else:
                             resolved_path = ""
                     if not resolved_path:
-                        raise Exception(f"Could not find include file found in {include_path} for {self.relative_path}")
+                        raise Exception(f'Could not find include file "{include_path}" found in "{self.relative_path}"')
 
 
 class ObjectFile(File):
@@ -192,12 +192,13 @@ class ObjectFile(File):
 class FileList:
     previous_state: dict[str, File]
     filelist: dict[str, File | SourceFile | ObjectFile]
+    filehash_path: str = f"{FreighterConfig.project.ProjectName}/temp/filehashes.json"
 
     @classmethod
     def init(cls):
         try:
-            if isfile(f"{FreighterConfig.project.ProjectName}_filehashes.json"):
-                with open(f"{FreighterConfig.project.ProjectName}_filehashes.json", "r") as f:
+            if isfile(cls.filehash_path):
+                with open(cls.filehash_path, "r") as f:
                     cls.previous_state = jsonpickle.loads(f.read())
             else:
                 cls.previous_state = dict[str, File]()
@@ -207,5 +208,5 @@ class FileList:
 
     @classmethod
     def save_state(cls):
-        with open(f"{FreighterConfig.project.ProjectName}_filehashes.json", "w") as f:
+        with open(cls.filehash_path, "w") as f:
             f.write(jsonpickle.encode(cls.filelist, indent=4))

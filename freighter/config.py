@@ -80,34 +80,38 @@ class ProjectProfile:
     # Required
     ProjectName: str
     GameID: str
+    InjectionAddress: int
     InputDolFile: str
     OutputDolFile: str
-    InjectionAddress: int
+    IncludeFolders: list[str]
+    SourceFolders: list[str]
 
     # Optional
     SDA: int = 0
     SDA2: int = 0
-    CommonArgs: list[str] = field(default_factory=list[str])
-    GCCArgs: list[str] = field(default_factory=list[str])
-    GPPArgs: list[str] = field(default_factory=list[str])
-    LDArgs: list[str] = field(default_factory=list[str])
-    IncludeFolders: list[str] = field(default_factory=list[str])
-    SourceFolders: list[str] = field(default_factory=list[str])
-    SymbolMapOutputPaths: list[str] = field(default_factory=list[str])
+    GeckoFolder: str = field(default="gecko/")
+    SymbolsFolder: str = field(default="symbols/")
     LinkerScripts: list[str] = field(default_factory=list[str])
+    TemporaryFilesFolder: str = field(default="temp/")
+    InputSymbolMap: str = ""
+    OutputSymbolMapPaths: list[str] = field(default_factory=list[str])
+
+    CleanUpTemporaryFiles: bool = False
+    VerboseOutput: bool = False
+
     IgnoredSourceFiles: list[str] = field(default_factory=list[str])
     IgnoredGeckoFiles: list[str] = field(default_factory=list[str])
     IgnoreHooks: list[str] = field(default_factory=list[str])
     DiscardLibraryObjects: list[str] = field(default_factory=list[str])
     DiscardSections: list[str] = field(default_factory=list[str])
-    TemporaryFilesFolder: str = field(default="build/temp/")
-    EntryFunction: str = ""
-    VerboseOutput: bool = False
-    InputSymbolMap: str = ""
-    BuildPath: str = field(default="build/")
-    GeckoFolder: str = field(default="gecko/")
-    SymbolsFolder: str = field(default="symbols/")
-    CleanUpTemporaryFiles: bool = True
+
+    CompilerArgs: list[str] = field(default_factory=list[str])
+    GCCArgs: list[str] = field(default_factory=list[str])
+    GPPArgs: list[str] = field(default_factory=list[str])
+    LDArgs: list[str] = field(default_factory=list[str])
+
+    def __repr__(self) -> str:
+        return self.ProjectName
 
 
 class FreighterConfig:
@@ -116,7 +120,7 @@ class FreighterConfig:
     config_path: str
 
     def __init__(self, project_toml_path: str = "", userenv_toml_path: str = "") -> None:
-        self.project_profiles = dict[str, ProjectProfile]()
+        FreighterConfig.project_profiles = dict[str, ProjectProfile]()
 
         if not project_toml_path:
             FreighterConfig.config_path = assert_file_exists(DEFAULT_CONFIG_PATH)
@@ -127,18 +131,37 @@ class FreighterConfig:
         with open(FreighterConfig.config_path, "rb") as f:
             tomlconfig = tomllib.load(f)
             for name, profile in tomlconfig["ProjectProfile"].items():
-                self.project_profiles[name] = from_dict(data_class=ProjectProfile, data=profile)
+                FreighterConfig.project_profiles[name] = from_dict(data_class=ProjectProfile, data=profile)
             default_profile_name = tomlconfig["DefaultProjectProfile"]
-            FreighterConfig.project = self.project_profiles[default_profile_name]
+            FreighterConfig.project = FreighterConfig.project_profiles[default_profile_name]
 
         if userenv_toml_path:
             with open(userenv_toml_path, "rb") as f:
                 user_env = tomllib.load(f)
                 FreighterConfig.user_env = from_dict(data_class=UserEnvironment, data=user_env)
-                if self.user_env.SelectedProfile:
-                    FreighterConfig.project = self.project_profiles[self.user_env.SelectedProfile]
+                if FreighterConfig.user_env.SelectedProfile:
+                    FreighterConfig.project = FreighterConfig.project_profiles[FreighterConfig.user_env.SelectedProfile]
         else:
             FreighterConfig.user_env = UserEnvironment()
+
+        # Use the ProjectName as the base directory
+        # os.chdir(project_name) # This seems to mess up spawning child processes
+
+        project_name = FreighterConfig.project.ProjectName
+        
+        FreighterConfig.project.InputDolFile = assert_file_exists(f"{project_name}/{FreighterConfig.project.InputDolFile}")
+        FreighterConfig.project.InputSymbolMap = assert_file_exists(f"{project_name}/{FreighterConfig.project.InputSymbolMap}")
+        FreighterConfig.project.SourceFolders = [i.replace(i, assert_dir_exists(f"{project_name}/{i}")) for i in FreighterConfig.project.SourceFolders]
+        FreighterConfig.project.IncludeFolders = [i.replace(i, assert_dir_exists(f"{project_name}/{i}")) for i in FreighterConfig.project.IncludeFolders]
+        
+        FreighterConfig.project.GeckoFolder = f"{project_name}/{FreighterConfig.project.GeckoFolder}"
+        FreighterConfig.project.SymbolsFolder = f"{project_name}/{FreighterConfig.project.SymbolsFolder}"
+
+        FreighterConfig.project.TemporaryFilesFolder = f"{project_name}/{FreighterConfig.project.TemporaryFilesFolder}"
+        FreighterConfig.project.OutputDolFile = f"{project_name}/{FreighterConfig.project.OutputDolFile}"
+        FreighterConfig.project.LinkerScripts = [i.replace(i, assert_file_exists(f"{project_name}/{i}")) for i in FreighterConfig.project.LinkerScripts]
+
+        FreighterConfig.project.IgnoredSourceFiles = [i.replace(i, f"{project_name}/{i}") for i in FreighterConfig.project.IgnoredSourceFiles]
 
         from .filelist import FileList, File
 

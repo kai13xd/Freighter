@@ -80,17 +80,16 @@ class Project:
         if self.project.InjectionAddress % 32:
             print("Warning!  DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
         if self.project.SDA and self.project.SDA2:
-            self.project.CommonArgs += ["-msdata=sysv"]
+            self.project.CompilerArgs += ["-msdata=sysv"]
             self.project.LDArgs += [f"--defsym=_SDA_BASE_={hex(self.project.SDA)}", f"--defsym=_SDA2_BASE_={hex(self.project.SDA2)}"]
         if self.project.InputSymbolMap:
             assert_file_exists(self.project.InputSymbolMap)
-            self.project.SymbolMapOutputPaths.append(self.user_env.DolphinDocumentsFolder + "Maps/" + self.project.GameID + ".map")
-        self.final_object_file = ObjectFile(self.project.BuildPath + self.project.ProjectName + ".o")
+            self.project.OutputSymbolMapPaths.append(self.user_env.DolphinDocumentsFolder + "Maps/" + self.project.GameID + ".map")
+        self.final_object_file = ObjectFile(self.project.TemporaryFilesFolder + self.project.ProjectName + ".o")
         self.gecko_table = GeckoCodeTable(self.project.GameID, self.project.ProjectName)
         self.dol = DolFile(open(self.project.InputDolFile, "rb"))
 
     def build(self) -> None:
-        os.system("cls||clear")
         build_start_time = time()
         makedirs(self.project.TemporaryFilesFolder, exist_ok=True)
         self.__get_source_files()
@@ -222,12 +221,13 @@ class Project:
                 raise Exception(f"{FLRED}Build process halted. Please fix code errors for the following files:\n{FLCYAN}" + source_file_error)
 
     def compile(self, source_file: SourceFile, output: ObjectFile) -> tuple[int, SourceFile, str, str]:
+        
         args = []
         if source_file.extension == ".cpp":
             args = [self.user_env.DevKitPPCBinFolder + GPP, "-c"] + self.project.GPPArgs
         else:
             args = [self.user_env.DevKitPPCBinFolder + GCC, "-c"] + self.project.GCCArgs
-        args += self.project.CommonArgs
+        args += self.project.CompilerArgs
         for path in self.project.IncludeFolders:
             args.append("-I" + path)
         args.extend([source_file.relative_path, "-o", output.relative_path, "-fdiagnostics-color=always"])
@@ -412,8 +412,6 @@ class Project:
                         written_symbols.add(symbol)
                 f.write("\t}\n\n")
 
-            if self.project.EntryFunction:
-                f.write("ENTRY(" + self.project.EntryFunction + ");\n")
             if self.static_libs:
                 for path in self.library_folders:
                     f.write(f'SEARCH_DIR("{path}");\n')
@@ -531,7 +529,6 @@ class Project:
             raise RuntimeError(
                 f"{ERROR} Freighter could not resolve hook addresses for the given symbols:\n{badlist}\n"
                 f"{FLWHITE}Possible Reasons:{FLRED}\n"
-                f"• If an entry function was specified to the linker it's possbile the function was optimized out by the compiler for being outside of the entry function's scope.\n"
                 f'• Symbol definitions were missing in the {FLCYAN}"symbols"{FLRED} folder.\n\n\n'
             )
         if len(self.bin_data) > 0:
@@ -604,7 +601,7 @@ class Project:
             print(f"{FLYELLOW}No input symbol map. Skipping.")
             return
 
-        if not self.project.SymbolMapOutputPaths:
+        if not self.project.OutputSymbolMapPaths:
             print(f"{FLYELLOW}No paths found for symbol map output. Skipping.")
             return
 
@@ -664,7 +661,7 @@ class Project:
                                 insert_str += f"{symbol.demangled_name}\t {symbol.source_file} {symbol.library_file}\n"
                             contents.insert(insert_index[section] + insert_offset, insert_str)
                             insert_offset += 1
-                for path in self.project.SymbolMapOutputPaths:
+                for path in self.project.OutputSymbolMapPaths:
                     open(path, "w").writelines(contents)
 
     @cache
