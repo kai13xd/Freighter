@@ -1,5 +1,6 @@
 from .doltools import *
 from .constants import *
+
 from dolreader.dol import DolFile
 from geckolibs.geckocode import GeckoCommand, Write16, Write32, WriteBranch, WriteString
 
@@ -16,7 +17,9 @@ SupportedGeckoCodetypes = [
 
 
 class Hook(object):
-    def __init__(self, address):
+    def __init__(self, address: int | str):
+        if isinstance(address, str):
+            address = int(address, 16)
         self.good = False
         self.address = address
         self.data = 0
@@ -58,12 +61,13 @@ class BranchHook(Hook):
 
     def write_geckocommand(self, f):
         if self.data:
-            gecko_command = WriteBranch(self.data, self.address, isLink=self.lk_bit)
+            gecko_command = WriteBranch(
+                self.data, self.address, isLink=self.lk_bit)
             f.write(gecko_command.as_text() + "\n")
             self.good = True
 
     def dump_info(self):
-        return f" 💉 {f'{FYELLOW}[{FLYELLOW}BranchLink{FYELLOW}]' if self.lk_bit else f'{FMAGENTA}[{FLMAGENTA}Branch{FMAGENTA}]'} {HEX}{self.address:x}{f'{FLGREEN} ✔️ {self.symbol_name}' if self.good else f'{FLRED} ❌ {self.symbol_name+FLRED}    Address was not found!'}"
+        return f" 💉 {f'{ORANGE}[{ORANGE}BranchLink{ORANGE}]' if self.lk_bit else f'{PURPLE}[Branch]'} {HEX}{self.address:x}{f'{GREEN} ✔️ {self.symbol_name}' if self.good else f'{RED} ❌ {self.symbol_name+RED}    Address was not found!'}"
 
 
 class PointerHook(Hook):
@@ -87,11 +91,11 @@ class PointerHook(Hook):
             self.good = True
 
     def dump_info(self):
-        return f" 💉 {FCYAN}[{FLCYAN}Pointer{FCYAN}]    {HEX}{self.address:x}{f'{FLGREEN} ✔️' if self.good else f'{FLRED} ❌'} {self.symbol_name}"
+        return f" 💉 {CYAN}[Pointer]    {HEX}{self.address:x}{f'{GREEN} ✔️' if self.good else f'{RED} ❌'} {self.symbol_name}"
 
 
 class StringHook(Hook):
-    def __init__(self, address, string, encoding, max_strlen):
+    def __init__(self, address: int | str, string: str, encoding: str = "ascii", max_strlen: int | None = None):
         Hook.__init__(self, address)
         self.data = bytearray()
         self.string = string
@@ -102,7 +106,8 @@ class StringHook(Hook):
         self.data = self.string.encode(self.encoding) + b"\x00"
         if self.max_strlen != None:
             if len(self.data) > self.max_strlen:
-                print('Warning: "{:s}" exceeds {} bytes!'.format(repr(self.string)[+1:-1], self.max_strlen))
+                print('Warning: "{:s}" exceeds {} bytes!'.format(
+                    repr(self.string)[+1:-1], self.max_strlen))
             else:
                 while len(self.data) < self.max_strlen:
                     self.data += b"\x00"
@@ -142,17 +147,19 @@ class FileHook(Hook):
         try:
             with open(self.filepath, "rb") as f:
                 if self.end == None:
-                    self.data = f.read()[self.start :]
+                    self.data = f.read()[self.start:]
                 else:
-                    self.data = f.read()[self.start : self.end]
+                    self.data = f.read()[self.start: self.end]
                 if self.max_size != None:
                     if len(self.data) > self.max_size:
-                        print('Warning: "{:s}" exceeds {} bytes!'.format(repr(self.filepath)[+1:-1], self.max_size))
+                        print('Warning: "{:s}" exceeds {} bytes!'.format(
+                            repr(self.filepath)[+1:-1], self.max_size))
                     else:
                         while len(self.data) < self.max_size:
                             self.data += b"\x00"
         except OSError:
-            print('Warning: "{:s}" could not be opened!'.format(repr(self.filepath)[+1:-1]))
+            print('Warning: "{:s}" could not be opened!'.format(
+                repr(self.filepath)[+1:-1]))
 
     def apply_dol(self, dol: DolFile):
         if dol.is_mapped(self.address):
@@ -195,17 +202,21 @@ class Immediate16Hook(Hook):
                 self.data = hia(symbols[self.symbol_name]["st_value"], True)
             elif self.modifier == "@sda":
                 if symbols["_SDA_BASE_"]["st_value"] == None:
-                    raise RuntimeError("You must set this project's sda_base member before using the @sda modifier!  Check out the set_sda_bases method.")
+                    raise RuntimeError(
+                        "You must set this project's sda_base member before using the @sda modifier!  Check out the set_sda_bases method.")
                 self.data = mask_field(
-                    symbols[self.symbol_name]["st_value"] - symbols["_SDA_BASE_"]["st_value"],
+                    symbols[self.symbol_name]["st_value"] -
+                    symbols["_SDA_BASE_"]["st_value"],
                     16,
                     True,
                 )
             elif self.modifier == "@sda2":
                 if symbols["_SDA2_BASE_"]["st_value"] == None:
-                    raise RuntimeError("You must set this project's sda2_base member before using the @sda2 modifier!  Check out the set_sda_bases method.")
+                    raise RuntimeError(
+                        "You must set this project's sda2_base member before using the @sda2 modifier!  Check out the set_sda_bases method.")
                 self.data = mask_field(
-                    symbols[self.symbol_name]["st_value"] - symbols["_SDA2_BASE_"]["st_value"],
+                    symbols[self.symbol_name]["st_value"] -
+                    symbols["_SDA2_BASE_"]["st_value"],
                     16,
                     True,
                 )
@@ -258,17 +269,21 @@ class Immediate12Hook(Hook):
                 self.data = hia(symbols[self.symbol_name]["st_value"], True)
             elif self.modifier == "@sda":
                 if symbols["_SDA_BASE_"]["st_value"] == None:
-                    raise RuntimeError("You must set this project's sda_base member before using the @sda modifier!  Check out the set_sda_bases method.")
+                    raise RuntimeError(
+                        "You must set this project's sda_base member before using the @sda modifier!  Check out the set_sda_bases method.")
                 self.data = mask_field(
-                    symbols[self.symbol_name]["st_value"] - symbols["_SDA_BASE_"]["st_value"],
+                    symbols[self.symbol_name]["st_value"] -
+                    symbols["_SDA_BASE_"]["st_value"],
                     16,
                     True,
                 )
             elif self.modifier == "@sda2":
                 if symbols["_SDA2_BASE_"]["st_value"] == None:
-                    raise RuntimeError("You must set this project's sda2_base member before using the @sda2 modifier!  Check out the set_sda_bases method.")
+                    raise RuntimeError(
+                        "You must set this project's sda2_base member before using the @sda2 modifier!  Check out the set_sda_bases method.")
                 self.data = mask_field(
-                    symbols[self.symbol_name]["st_value"] - symbols["_SDA2_BASE_"]["st_value"],
+                    symbols[self.symbol_name]["st_value"] -
+                    symbols["_SDA2_BASE_"]["st_value"],
                     16,
                     True,
                 )

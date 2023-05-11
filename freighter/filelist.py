@@ -1,16 +1,15 @@
 from .config import FreighterConfig
+
+import hashlib
+import re
 import jsonpickle
+import os
+
 from os.path import isfile
 from os import PathLike
 from pathlib import Path
-import hashlib
-from functools import cache
-import os
-import re
 from dataclasses import dataclass
-from typing import TypeAlias
 from copy import deepcopy
-import time
 
 
 class File(PathLike):
@@ -23,14 +22,12 @@ class File(PathLike):
             self.calculate_hash()
             if self.is_hash_same():
                 self.restore_previous_state()
-                FileList.filelist[self.relative_path] = self
                 return
         self.name = path.name
         self.stem = path.stem
         self.extension = path.suffix
         self.parent = path.parent.as_posix()
         self.dependencies = set[str]()
-        FileList.filelist[self.relative_path] = self
 
     def set_dirty(self):
         self.is_dirty = True
@@ -44,17 +41,15 @@ class File(PathLike):
 
     def restore_previous_state(self):
         # Need to deepcopy so we don't accidentally use object references
-        self.__dict__ = deepcopy(FileList.previous_state[self.relative_path].__dict__)
-
-    def is_cached(self):
-        return self.relative_path in FileList.previous_state.keys()
+        self.__dict__ = deepcopy(
+            FileList.previous_state[self.relative_path].__dict__)
 
     def is_hash_same(self) -> bool:
         if self.is_dirty:
             self.calculate_hash()
             self.is_dirty = False
-        if self.is_cached():
-            return self.sha256hash == FileList.previous_state[self.relative_path].sha256hash
+        if FileList.is_cached(self):
+            return self.sha256hash == FileList.get_cached_hash(self)
         else:
             return False
 
@@ -103,27 +98,29 @@ re_in_quotes = re.compile('"([^"]*)"')
 
 
 class SourceFile(File):
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: str | Path) -> None:
         super().__init__(path)
 
         if self.extension in [".c", ".cpp"]:
             self.object_file_path = f"{FreighterConfig.project.TemporaryFilesFolder}{self.name}.o"
             self.object_file = ObjectFile(self.object_file_path)
-
+            FileList.add(self.object_file )
         self.get_includes(path)
         for include in self.dependencies.copy():
             if include in FileList.filelist.keys():
                 include_file = FileList.filelist[include]
                 self.dependencies |= include_file.dependencies
+                FileList.add(include_file)
             else:
                 include_file = SourceFile(include)
                 for include in include_file.dependencies:
                     self.dependencies |= include_file.dependencies
+                FileList.add(include_file)
 
     def needs_recompile(self) -> bool:
         # Always recompile if the config has been modified
-        if not FileList.filelist[FreighterConfig.config_path].is_hash_same():
-            return True
+        if FileList.filelist[FreighterConfig.project_toml_path].is_hash_same():
+            return False
 
         # Recompile deleted object files
         if not self.object_file.exists():
@@ -140,7 +137,7 @@ class SourceFile(File):
                 return True
         return False
 
-    def get_includes(self, filepath: Path):
+    def get_includes(self, filepath: str | Path):
         filepath = Path(filepath)
         include_path: str
         with open(filepath, "r", encoding="utf8") as f:
@@ -152,14 +149,17 @@ class SourceFile(File):
 
                     # Handle parent directory path lookups
                     if "../" in include_path:
-                        include_path = Path.joinpath(Path(filepath.parent), include_path)
-                        resolved_path = os.path.relpath(Path.resolve(include_path)).replace("\\", "/")
+                        include_path = Path.joinpath(
+                            Path(filepath.parent), include_path)
+                        resolved_path = os.path.relpath(
+                            Path.resolve(include_path)).replace("\\", "/")
                         if isfile(resolved_path):
                             self.dependencies.add(resolved_path)
                             continue
 
                     # Check the immediate source directory
-                    resolved_path = Path.joinpath(Path(filepath.parent), include_path)
+                    resolved_path = Path.joinpath(
+                        Path(filepath.parent), include_path)
                     if resolved_path.exists():
                         self.dependencies.add(resolved_path.as_posix())
                         continue
@@ -167,14 +167,16 @@ class SourceFile(File):
                     # Check include folders
                     resolved_path = ""
                     for include_folder in FreighterConfig.project.IncludeFolders:
-                        resolved_path = Path.joinpath(Path(include_folder), include_path)
+                        resolved_path = Path.joinpath(
+                            Path(include_folder), include_path)
                         if resolved_path.is_file():
                             self.dependencies.add(resolved_path.as_posix())
                             break
                         else:
                             resolved_path = ""
                     if not resolved_path:
-                        raise Exception(f'Could not find include file "{include_path}" found in "{self.relative_path}"')
+                        raise Exception(
+                            f'Could not find include file "{include_path}" found in "{self.relative_path}"')
 
 
 class ObjectFile(File):
@@ -190,15 +192,15 @@ class ObjectFile(File):
 
 
 class FileList:
-    previous_state: dict[str, File]
+    previous_state: dict[str, File | SourceFile | ObjectFile]
     filelist: dict[str, File | SourceFile | ObjectFile]
-    filehash_path: str = f"{FreighterConfig.project.ProjectName}/temp/filehashes.json"
 
     @classmethod
     def init(cls):
+        filehash_path = "temp/filehashes.json"
         try:
-            if isfile(cls.filehash_path):
-                with open(cls.filehash_path, "r") as f:
+            if isfile(filehash_path):
+                with open(filehash_path, "r") as f:
                     cls.previous_state = jsonpickle.loads(f.read())
             else:
                 cls.previous_state = dict[str, File]()
@@ -208,5 +210,34 @@ class FileList:
 
     @classmethod
     def save_state(cls):
-        with open(cls.filehash_path, "w") as f:
+        filehash_path: str = "temp/filehashes.json"
+        with open(filehash_path, "w") as f:
             f.write(jsonpickle.encode(cls.filelist, indent=4))
+
+    @classmethod
+    def add(cls, file: str | File):
+        if isinstance(file, File):
+            cls.filelist[file.relative_path] = file
+        else:
+            cls.filelist[file] = File(file)
+
+    @classmethod
+    def contains(cls, file: str | File) -> bool:
+        if isinstance(file, File):
+            return file.relative_path in cls.filelist.keys()
+        else:
+            return file in cls.filelist.keys()
+
+    @classmethod
+    def is_cached(cls, file: str | File) -> bool:
+        if isinstance(file, File):
+            return file.relative_path in cls.previous_state.keys()
+        else:
+            return file in cls.previous_state.keys()
+
+    @classmethod
+    def get_cached_hash(cls, file: str | File) -> str:
+        if isinstance(file, File):
+            return cls.previous_state[file.relative_path].sha256hash
+        else:
+            return cls.previous_state[file].sha256hash

@@ -1,83 +1,113 @@
+from .constants import *
+from .exceptions import *
 import tomllib
 from dataclasses import dataclass, field
-from dacite import from_dict
 from os.path import isdir, isfile, normpath, join
+from os import mkdir
 from pathlib import Path
-from .constants import *
+from dacite import from_dict
+
+if not isdir(FREIGHTER_LOCALAPPDATA):
+    mkdir(FREIGHTER_LOCALAPPDATA)
 
 
-def assert_file_exists(path: str) -> str:
+def assert_file_exists(path: str | Path) -> str:
+    path = Path(path)
     if isfile(path):
         return normpath(path).replace("\\", "/")
-    raise Exception(f"{FLRED}Freighter could not find the file: '{FLCYAN + path + FLRED}'")
+    raise FreighterException(
+        f"Freighter could not find the file: {WARN_COLOR}'{INFO_COLOR}{path}{WARN_COLOR}'")
 
 
-def assert_dir_exists(path: str) -> str:
+def assert_dir_exists(path: str | Path) -> str:
+    path = Path(path)
+    path = path.absolute()
     if isdir(path):
         return join(normpath(path), "").replace("\\", "/")
-    raise Exception(f"{FLRED}Freighter could not find the folder '{FLCYAN + path + FLRED}'")
+    raise FreighterException(
+        f"Freighter could not find the folder {WARN_COLOR}'{INFO_COLOR}{path}{WARN_COLOR}'")
 
 
-@dataclass(frozen=True)
 class UserEnvironment:
-    SelectedProfile: str = field(default="")
-    DevKitPPCBinFolder: str = field(default="")
-    DolphinDocumentsFolder: str = field(default="")
+    DevKitPPCBinFolder: str = ""
+    DolphinDocumentsFolder: str = ""
 
-    def __post_init__(self):
-        if not self.DolphinDocumentsFolder:
-            self.find_dolphin_documents_folder()
+    @classmethod
+    def load(cls, userenv_toml_path: str = "") -> None:
+        if not userenv_toml_path:
+            if not isfile(FREIGHTER_USERENVIRONMENT):
+                cls.find_dekitppc_bin_folder()
+                cls.find_dolphin_documents_folder()
+                with open(FREIGHTER_USERENVIRONMENT, "w+") as f:
+                    f.write(
+                        f'DevKitPPCBinFolder = "{cls.DevKitPPCBinFolder}"\n')
+                    f.write(
+                        f'DolphinDocumentsFolder = "{cls.DolphinDocumentsFolder}"\n')
+                    return
+                
+            userenv_toml_path = assert_file_exists(FREIGHTER_USERENVIRONMENT)
+        with open(userenv_toml_path, "rb") as f:
+            data = tomllib.load(f)
+            if "DevKitPPCBinFolder" in data.keys():
+                cls.DevKitPPCBinFolder = data["DevKitPPCBinFolder"]
+            if "DolphinDocumentsFolder" in data.keys():
+                cls.DolphinDocumentsFolder = data["DolphinDocumentsFolder"]
+        cls.verify_paths()
+
+    @classmethod
+    def verify_paths(cls) -> None:
+        if not cls.DolphinDocumentsFolder:
+            cls.find_dolphin_documents_folder()
         else:
-            object.__setattr__(self, "DolphinDocumentsFolder", assert_dir_exists(self.DolphinDocumentsFolder))
-        if not self.DevKitPPCBinFolder:
-            self.find_dekitppc_bin_folder()
+            cls.DolphinDocumentsFolder = assert_dir_exists(
+                cls.DolphinDocumentsFolder)
+        if not cls.DevKitPPCBinFolder:
+            cls.find_dekitppc_bin_folder()
         else:
-            object.__setattr__(self, "DevKitPPCBinFolder", assert_dir_exists(self.DevKitPPCBinFolder))
-            assert_file_exists(self.DevKitPPCBinFolder + GPP)
-            assert_file_exists(self.DevKitPPCBinFolder + GCC)
-            assert_file_exists(self.DevKitPPCBinFolder + LD)
-            assert_file_exists(self.DevKitPPCBinFolder + AR)
-            assert_file_exists(self.DevKitPPCBinFolder + OBJDUMP)
-            assert_file_exists(self.DevKitPPCBinFolder + OBJCOPY)
-            assert_file_exists(self.DevKitPPCBinFolder + NM)
-            assert_file_exists(self.DevKitPPCBinFolder + READELF)
-            assert_file_exists(self.DevKitPPCBinFolder + GBD)
-            assert_file_exists(self.DevKitPPCBinFolder + CPPFLIT)
+            cls.DevKitPPCBinFolder = assert_dir_exists(cls.DevKitPPCBinFolder)
+            assert_file_exists(cls.DevKitPPCBinFolder + GPP)
+            assert_file_exists(cls.DevKitPPCBinFolder + GCC)
+            assert_file_exists(cls.DevKitPPCBinFolder + LD)
+            assert_file_exists(cls.DevKitPPCBinFolder + AR)
+            assert_file_exists(cls.DevKitPPCBinFolder + OBJDUMP)
+            assert_file_exists(cls.DevKitPPCBinFolder + OBJCOPY)
+            assert_file_exists(cls.DevKitPPCBinFolder + NM)
+            assert_file_exists(cls.DevKitPPCBinFolder + READELF)
+            assert_file_exists(cls.DevKitPPCBinFolder + GBD)
+            assert_file_exists(cls.DevKitPPCBinFolder + CPPFLIT)
 
-    def find_dekitppc_bin_folder(self):
-        try:
-            if PLATFORM == "Windows":
-                path = ""
-                drives = [f"{drive}:" for drive in "CDEFGHIJKLMNOPQRSTUVWXYZ"]
-                for drive in drives:
-                    path = f"{drive}/devkitPro/devkitPPC/bin/"
-                    if isdir(path):
-                        break
-                    else:
-                        path = ""
-                object.__setattr__(self, "DevKitPPCBinFolder", assert_dir_exists(path))
-            elif PLATFORM == "Linux":
-                object.__setattr__(self, "DevKitPPCBinFolder", assert_dir_exists("/opt/devkitpro/devkitPPC/bin/"))
-            else:
-                raise EnvironmentError(f"{PLATFORM} is not a supported environment!")
-        except:
-            raise EnvironmentError(f'{FLRED} Could not find your DevKitPPC "bin/" folder"\n')
+    @classmethod
+    def find_dekitppc_bin_folder(cls) -> None:
+        if PLATFORM == "Windows":
+            path = ""
+            for drive in DRIVES:
+                path = f"{drive}/devkitPro/devkitPPC/bin/"
+                if isdir(path):
+                    break
+                else:
+                    path = ""
+            cls.DevKitPPCBinFolder = assert_dir_exists(path)
+        elif PLATFORM == "Linux":
+            cls.DevKitPPCBinFolder = "/opt/devkitpro/devkitPPC/bin/"
+        else:
+            raise EnvironmentError(
+                f"{PLATFORM} is not a supported environment!")
 
-    def find_dolphin_documents_folder(self):
-        try:
-            if PLATFORM == "Windows":
-                object.__setattr__(self, "DolphinDocumentsFolder", assert_dir_exists(str(Path.home()) + "/Documents/Dolphin Emulator/"))
-            elif PLATFORM == "Linux":
-                object.__setattr__(self, "DolphinDocumentsFolder", str(Path.home()) + "/.local/share/dolphin-emu/")
-            else:
-                raise EnvironmentError(f"{PLATFORM} is not a supported environment!")
-        except:
-            print(f"{FLYELLOW}[Warning] Could not find your Dolphin Maps folder")
+    @classmethod
+    def find_dolphin_documents_folder(cls) -> None:
+        if PLATFORM == "Windows":
+            cls.DolphinDocumentsFolder = assert_dir_exists(
+                str(Path.home()) + "/Documents/Dolphin Emulator/")
+        elif PLATFORM == "Linux":
+            cls.DolphinDocumentsFolder = str(
+                Path.home()) + "/.local/share/dolphin-emu/"
+        else:
+            raise FreighterException(
+                f"{PLATFORM} is not a supported environment!")
 
 
-@dataclass()
+@dataclass
 class ProjectProfile:
-    # Required
     ProjectName: str
     GameID: str
     InjectionAddress: int
@@ -87,15 +117,16 @@ class ProjectProfile:
     SourceFolders: list[str]
 
     # Optional
+    DefaultProjectProfile: str = ""
     SDA: int = 0
     SDA2: int = 0
-    GeckoFolder: str = field(default="gecko/")
-    SymbolsFolder: str = field(default="symbols/")
+    GeckoFolder: str = "gecko/"
+    SymbolsFolder: str = ""
     LinkerScripts: list[str] = field(default_factory=list[str])
     TemporaryFilesFolder: str = field(default="temp/")
     InputSymbolMap: str = ""
     OutputSymbolMapPaths: list[str] = field(default_factory=list[str])
-
+    StringHooks: dict[str, str] = field(default_factory=dict[str, str])
     CleanUpTemporaryFiles: bool = False
     VerboseOutput: bool = False
 
@@ -110,64 +141,47 @@ class ProjectProfile:
     GPPArgs: list[str] = field(default_factory=list[str])
     LDArgs: list[str] = field(default_factory=list[str])
 
-    def __repr__(self) -> str:
-        return self.ProjectName
+    def verify_paths(self):
+        assert_file_exists(self.InputDolFile)
+        assert_file_exists(self.InputSymbolMap)
+        for folder in self.IncludeFolders:
+            assert_dir_exists(folder)
+        for folder in self.SourceFolders:
+            assert_dir_exists(folder)
+        assert_dir_exists(self.GeckoFolder)
+
+        if self.SymbolsFolder:
+            assert_dir_exists(self.SymbolsFolder)
+        for file in self.LinkerScripts:
+            assert_file_exists(file)
 
 
-class FreighterConfig:
+class FreighterConfig():
+    default_project: ProjectProfile
     project: ProjectProfile
-    user_env: UserEnvironment
-    config_path: str
+    profiles = dict[str, ProjectProfile]()
+    project_toml_path: str
 
-    def __init__(self, project_toml_path: str = "", userenv_toml_path: str = "") -> None:
-        FreighterConfig.project_profiles = dict[str, ProjectProfile]()
-
+    @classmethod
+    def load(cls, project_toml_path: str = ""):
+        cls.project_toml_path = project_toml_path
         if not project_toml_path:
-            FreighterConfig.config_path = assert_file_exists(DEFAULT_CONFIG_PATH)
+            cls.project_toml_path = assert_file_exists(DEFAULT_CONFIG_PATH)
 
-        if not userenv_toml_path:
-            userenv_toml_path = assert_file_exists(DEFAULT_USERENV_PATH)
-
-        with open(FreighterConfig.config_path, "rb") as f:
+        with open(cls.project_toml_path, "rb") as f:
             tomlconfig = tomllib.load(f)
-            for name, profile in tomlconfig["ProjectProfile"].items():
-                FreighterConfig.project_profiles[name] = from_dict(data_class=ProjectProfile, data=profile)
-            default_profile_name = tomlconfig["DefaultProjectProfile"]
-            FreighterConfig.project = FreighterConfig.project_profiles[default_profile_name]
 
-        if userenv_toml_path:
-            with open(userenv_toml_path, "rb") as f:
-                user_env = tomllib.load(f)
-                FreighterConfig.user_env = from_dict(data_class=UserEnvironment, data=user_env)
-                if FreighterConfig.user_env.SelectedProfile:
-                    FreighterConfig.project = FreighterConfig.project_profiles[FreighterConfig.user_env.SelectedProfile]
+        for name, profile in tomlconfig["ProjectProfile"].items():
+            cls.profiles[name] = from_dict(
+                data_class=ProjectProfile, data=profile)
+
+        # Set the default profile as the first entry in the TOML
+        cls.default_project = next(iter(cls.profiles.values()))
+
+    @classmethod
+    def set_project_profile(cls, profile_name: str) -> None:
+        if profile_name == "Default":
+            cls.project = cls.default_project
         else:
-            FreighterConfig.user_env = UserEnvironment()
-
-        # Use the ProjectName as the base directory
-        # os.chdir(project_name) # This seems to mess up spawning child processes
-
-        project_name = FreighterConfig.project.ProjectName
-        
-        FreighterConfig.project.InputDolFile = assert_file_exists(f"{project_name}/{FreighterConfig.project.InputDolFile}")
-        FreighterConfig.project.InputSymbolMap = assert_file_exists(f"{project_name}/{FreighterConfig.project.InputSymbolMap}")
-        FreighterConfig.project.SourceFolders = [i.replace(i, assert_dir_exists(f"{project_name}/{i}")) for i in FreighterConfig.project.SourceFolders]
-        FreighterConfig.project.IncludeFolders = [i.replace(i, assert_dir_exists(f"{project_name}/{i}")) for i in FreighterConfig.project.IncludeFolders]
-        
-        FreighterConfig.project.GeckoFolder = f"{project_name}/{FreighterConfig.project.GeckoFolder}"
-        FreighterConfig.project.SymbolsFolder = f"{project_name}/{FreighterConfig.project.SymbolsFolder}"
-
-        FreighterConfig.project.TemporaryFilesFolder = f"{project_name}/{FreighterConfig.project.TemporaryFilesFolder}"
-        FreighterConfig.project.OutputDolFile = f"{project_name}/{FreighterConfig.project.OutputDolFile}"
-        FreighterConfig.project.LinkerScripts = [i.replace(i, assert_file_exists(f"{project_name}/{i}")) for i in FreighterConfig.project.LinkerScripts]
-
-        FreighterConfig.project.IgnoredSourceFiles = [i.replace(i, f"{project_name}/{i}") for i in FreighterConfig.project.IgnoredSourceFiles]
-
-        from .filelist import FileList, File
-
-        FileList.init()
-        File(FreighterConfig.config_path)
-
-
-# Singleton init
-FreighterConfig()
+            cls.project = cls.profiles[profile_name]
+        cls.project.verify_paths()
