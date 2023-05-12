@@ -116,9 +116,11 @@ class UserEnvironment:
             cls.set_binutils()
             return
 
-        cls.DevKitProPath = input(f"Freighter could not find your devkitPro folder. Expected to be found at {expected_path}.\n Input the path to set it:")
+        cls.DevKitProPath = input(f"Freighter could not find your devkitPro folder. Expected to be found at {expected_path}.\n Input the path to set it:") +"/"
+        cls.set_binutils()
         while not cls.verify_devkitpro():
-            cls.DevKitProPath = input(f"Try again:")
+            cls.DevKitProPath = input(f"Try again:") +"/"
+            cls.set_binutils()
 
     @classmethod
     def find_dolphin_documents_folder(cls) -> None:
@@ -134,9 +136,9 @@ class UserEnvironment:
             cls.DolphinUserPath = str(Path.home().as_posix()) + expected_path
             cls.DolphinMaps = cls.DolphinUserPath + "Maps/"
             return
-        cls.DolphinPathath = input(f"Freighter could not find your Dolphin folder. Expected to be found at {expected_path}.\n Input the path to set it:")
-        while not cls.verify_devkitpro():
-            cls.DolphinUserPath = input("Try again:")
+        cls.DolphinUserPath = input(f"Freighter could not find your Dolphin folder. Expected to be found at {expected_path}.\n Input the path to set it:") +"/"
+        while not cls.verify_dolphin():
+            cls.DolphinUserPath = input("Try again:") +"/"
 
     @classmethod
     def verify_devkitpro(cls) -> bool:
