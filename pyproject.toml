@@ -43,4 +43,6 @@ include= ["freighter*"]
 
 [tool.setuptools_scm]
 write_to = "freighter/version.py"
-local_scheme = "dirty-tag"
+version_scheme = "python-simplified-semver" #guess-next-dev, post-release, python-simplified-semver, release-branch-semver, no-guess-dev
+local_scheme = "no-local-version" #node-and-date, node-and-timestamp, dirty-tag, no-local-version
+git_describe_command = "git describe --tags --long --match v*"
