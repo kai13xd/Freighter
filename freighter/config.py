@@ -136,9 +136,11 @@ class UserEnvironment:
             cls.DolphinUserPath = str(Path.home().as_posix()) + expected_path
             cls.DolphinMaps = cls.DolphinUserPath + "Maps/"
             return
-        cls.DolphinUserPath = input(f"Freighter could not find your Dolphin folder. Expected to be found at {expected_path}.\n Input the path to set it:") +"/"
+        cls.DolphinUserPath = input(f"Freighter could not find your Dolphin User folder. Expected to be found at {expected_path}.\n Input the path to set it:") +"/"
+        cls.DolphinMaps = cls.DolphinUserPath + "Maps/"
         while not cls.verify_dolphin():
             cls.DolphinUserPath = input("Try again:") +"/"
+            cls.DolphinMaps = cls.DolphinUserPath + "Maps/"
 
     @classmethod
     def verify_devkitpro(cls) -> bool:
