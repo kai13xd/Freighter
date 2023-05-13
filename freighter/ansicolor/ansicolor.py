@@ -16,9 +16,12 @@ class Color:
     _luminance: float = field(init=False, repr=False)
 
     @overload
-    def __init__(self, red: int, green: int, blue: int) -> None: ...
+    def __init__(self, red: int, green: int, blue: int) -> None:
+        ...
+
     @overload
-    def __init__(self, red: float, green: float, blue: float) -> None: ...
+    def __init__(self, red: float, green: float, blue: float) -> None:
+        ...
 
     def __init__(self, red: int | float, green: int | float, blue: int | float) -> None:
         if isinstance(red, int):
@@ -197,7 +200,7 @@ class AnsiTrueColor(Color):
     def __init__(self, red: int | float, green: int | float, blue: int | float, is_background: bool = False) -> None:
         super().__init__(red, green, blue)
         r, g, b = self.rgb
-        if (is_background):
+        if is_background:
             self.ansi_code = f"\x1b[48;2;{r};{g};{b}m"
         else:
             self.ansi_code = f"\x1b[38;2;{r};{g};{b}m"

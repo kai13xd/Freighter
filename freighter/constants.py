@@ -2,6 +2,7 @@ from platform import system
 from .ansicolor import *
 from os import path
 from pathlib import Path
+
 HOCOTATE_RED = AnsiTrueColor(251, 58, 43)
 HOCOTATE_RED_BACKGROUND = AnsiTrueColor(251, 58, 43, is_background=True)
 HOCOTATE_BEIGE = AnsiTrueColor(240, 217, 136)
@@ -44,6 +45,25 @@ DEFAULT_CONFIG_PATH = "ProjectConfig.toml"
 
 FREIGHTER_LOCALAPPDATA = path.expandvars("%LOCALAPPDATA%/Freighter/")
 FREIGHTER_USERENVIRONMENT = FREIGHTER_LOCALAPPDATA + "UserEnvironment.toml"
-DRIVES = [f"{drive}:" for drive in "CDEFGHIJKLMNOPQRSTUVWXYZ"]
 
-import setuptools_scm
+import re
+
+RE_STRING = r'"(.*)"'
+RE_STRING_REPLACE = rf'{ORANGE}"{CYAN}\1{ORANGE}"{AnsiAttribute.RESET}'
+
+RE_HEX = r"(0x)([0-9a-f].* )"
+RE_HEX_REPLACE = rf"{PURPLE}\1{GREEN}\2{AnsiAttribute.RESET}"
+
+
+FREIGHTER = f"{AnsiAttribute.BOLD}{HOCOTATE_RED}Freighter{AnsiAttribute.RESET}"
+INFO = f"{AnsiAttribute.RESET}[{AnsiAttribute.BOLD}{CYAN}Info{AnsiAttribute.RESET}] "
+WARN = f"{AnsiAttribute.RESET}[{AnsiAttribute.BOLD}{ORANGE}WARN{AnsiAttribute.RESET}] "
+
+
+def console_print(string: str, type = "Info") -> None:
+    string = re.sub(RE_STRING, RE_STRING_REPLACE, string)
+    string = re.sub(RE_HEX, RE_HEX_REPLACE, string)
+    if type == "Info":
+        print(INFO + string)
+    if type == "Warn":
+        print(WARN + string)
