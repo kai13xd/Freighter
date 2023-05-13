@@ -12,57 +12,6 @@ from dataclasses import dataclass
 from copy import deepcopy
 
 
-class File(PathLike):
-    def __init__(self, path: str | Path) -> None:
-        path = Path(path)
-        self.is_dirty = False
-        self.relative_path = path.as_posix()
-        self.sha256hash = ""
-        if self.exists():
-            self.calculate_hash()
-            if self.is_hash_same():
-                self.restore_previous_state()
-                return
-        self.name = path.name
-        self.stem = path.stem
-        self.extension = path.suffix
-        self.parent = path.parent.as_posix()
-        self.dependencies = set[str]()
-
-    def set_dirty(self):
-        self.is_dirty = True
-
-    def exists(self) -> bool:
-        return isfile(self)
-
-    def calculate_hash(self):
-        with open(self, "rb") as f:
-            self.sha256hash = hashlib.file_digest(f, "sha256").hexdigest()
-
-    def restore_previous_state(self):
-        # Need to deepcopy so we don't accidentally use object references
-        self.__dict__ = deepcopy(
-            FileList.previous_state[self.relative_path].__dict__)
-
-    def is_hash_same(self) -> bool:
-        if self.is_dirty:
-            self.calculate_hash()
-            self.is_dirty = False
-        if FileList.is_cached(self):
-            return self.sha256hash == FileList.get_cached_hash(self)
-        else:
-            return False
-
-    def __fspath__(self) -> str:
-        return self.relative_path
-
-    def __repr__(self) -> str:
-        return f"SourceFile object {self.relative_path}"
-
-    def __str__(self) -> str:
-        return self.relative_path
-
-
 @dataclass
 class Symbol:
     name = ""
@@ -94,28 +43,118 @@ class Symbol:
         return hash((self.name, self.demangled_name, self.address, self.address))
 
 
-re_in_quotes = re.compile('"([^"]*)"')
-
-
-class SourceFile(File):
+class File(PathLike):
     def __init__(self, path: str | Path) -> None:
-        super().__init__(path)
+        path = Path(path)
+        self.is_dirty = False
+        self.relative_path = path.as_posix()
+        self.sha256hash = ""
+        self.name = path.name
+        self.stem = path.stem
+        self.extension = path.suffix
+        self.parent = path.parent.absolute().as_posix()
+        self.dependencies = set[str]()
+        if self.exists():
+            self.calculate_hash()
+            if self.is_hash_same():
+                self.restore_previous_state()
+        FileList.add(self)
 
-        if self.extension in [".c", ".cpp"]:
-            self.object_file_path = f"{FreighterConfig.project.TemporaryFilesFolder}{self.name}.o"
-            self.object_file = ObjectFile(self.object_file_path)
-            FileList.add(self.object_file )
-        self.get_includes(path)
+    def set_dirty(self):
+        self.is_dirty = True
+
+    def exists(self) -> bool:
+        return isfile(self)
+
+    def calculate_hash(self):
+        with open(self, "rb") as f:
+            self.sha256hash = hashlib.file_digest(f, "sha256").hexdigest()
+
+    def restore_previous_state(self):
+        # Need to deepcopy so we don't accidentally use object references
+        self.__dict__ = deepcopy(FileList.previous_state[self.relative_path].__dict__)
+
+    def is_hash_same(self) -> bool:
+        if self.is_dirty:
+            self.calculate_hash()
+            self.is_dirty = False
+        if FileList.is_cached(self):
+            return self.sha256hash == FileList.get_cached_hash(self)
+        else:
+            return False
+
+    def __fspath__(self) -> str:
+        return self.relative_path
+
+    def __repr__(self) -> str:
+        return f"SourceFile object {self.relative_path}"
+
+    def __str__(self) -> str:
+        return self.relative_path
+
+
+class HeaderFile(File):
+    def __init__(self, path: str | Path) -> None:
+        File.__init__(self, path)
+        self.dependencies = self.get_includes(path)
         for include in self.dependencies.copy():
-            if include in FileList.filelist.keys():
-                include_file = FileList.filelist[include]
-                self.dependencies |= include_file.dependencies
-                FileList.add(include_file)
+            # Use the work we already have done
+            if FileList.contains(include):
+                self.dependencies |= FileList.get(include).dependencies
             else:
-                include_file = SourceFile(include)
+                include_file = HeaderFile(include)
                 for include in include_file.dependencies:
                     self.dependencies |= include_file.dependencies
-                FileList.add(include_file)
+
+    def get_includes(self, filepath: str | Path):
+        filepath = Path(filepath)
+        include_path: str
+        dependencies = set[str]()
+        with open(filepath, "r", encoding="utf8") as f:
+            lines = f.readlines()
+
+        for line in lines:
+            if "<" in line:
+                continue
+            # if line.startswith("#i"):
+            if line.startswith("#include"):
+                include_path = re.findall(r'"([^"]*)"', line)[0]
+
+                # Handle parent directory path lookups
+                if "../" in include_path:
+                    include_path = filepath.parent.joinpath(include_path)
+                    resolved_path = os.path.relpath(Path.resolve(Path(include_path))).replace("\\", "/")
+                    if isfile(resolved_path):
+                        dependencies.add(resolved_path)
+                        continue
+
+                # Check the immediate source directory
+                resolved_path = Path.joinpath(Path(filepath.parent), include_path)
+                if resolved_path.exists():
+                    dependencies.add(resolved_path.as_posix())
+                    continue
+
+                # Check include folders
+                resolved_path = ""
+                for include_folder in FreighterConfig.selected_profile.IncludeFolders:
+                    resolved_path = Path.joinpath(Path(include_folder), include_path)
+                    if resolved_path.is_file():
+                        dependencies.add(resolved_path.as_posix())
+                        break
+                    else:
+                        resolved_path = ""
+                if not resolved_path:
+                    raise Exception(f'Could not find include file "{include_path}" found in "{self.relative_path}"')
+        return dependencies
+
+
+class SourceFile(HeaderFile):
+    def __init__(self, path: str | Path) -> None:
+        HeaderFile.__init__(self, path)
+        if self.extension in [".c", ".cpp"]:
+            self.object_file_path = f"{FreighterConfig.selected_profile.TemporaryFilesFolder}{self.name}.o"
+            self.object_file = ObjectFile(self.object_file_path)
+            FileList.add(self.object_file)
 
     def needs_recompile(self) -> bool:
         # Always recompile if the config has been modified
@@ -137,54 +176,12 @@ class SourceFile(File):
                 return True
         return False
 
-    def get_includes(self, filepath: str | Path):
-        filepath = Path(filepath)
-        include_path: str
-        with open(filepath, "r", encoding="utf8") as f:
-            for line in f.readlines():
-                if "<" in line:
-                    continue
-                if line.startswith("#include"):
-                    include_path = re_in_quotes.findall(line)[0]
-
-                    # Handle parent directory path lookups
-                    if "../" in include_path:
-                        include_path = Path.joinpath(
-                            Path(filepath.parent), include_path)
-                        resolved_path = os.path.relpath(
-                            Path.resolve(include_path)).replace("\\", "/")
-                        if isfile(resolved_path):
-                            self.dependencies.add(resolved_path)
-                            continue
-
-                    # Check the immediate source directory
-                    resolved_path = Path.joinpath(
-                        Path(filepath.parent), include_path)
-                    if resolved_path.exists():
-                        self.dependencies.add(resolved_path.as_posix())
-                        continue
-
-                    # Check include folders
-                    resolved_path = ""
-                    for include_folder in FreighterConfig.project.IncludeFolders:
-                        resolved_path = Path.joinpath(
-                            Path(include_folder), include_path)
-                        if resolved_path.is_file():
-                            self.dependencies.add(resolved_path.as_posix())
-                            break
-                        else:
-                            resolved_path = ""
-                    if not resolved_path:
-                        raise Exception(
-                            f'Could not find include file "{include_path}" found in "{self.relative_path}"')
-
 
 class ObjectFile(File):
     def __init__(self, path: str | Path) -> None:
-        path = Path(path)
+        File.__init__(self, path)
         self.symbols = dict[str, Symbol]()
-        self.source_file_name = path.stem
-        super().__init__(path)
+        self.source_file_name = self.stem
 
     def add_symbol(self, symbol: Symbol):
         self.symbols[symbol.demangled_name] = symbol
@@ -222,9 +219,18 @@ class FileList:
             cls.filelist[file] = File(file)
 
     @classmethod
-    def contains(cls, file: str | File) -> bool:
+    def get(cls, file: str | File) -> File:
+        if isinstance(file, File):
+            return cls.filelist[file.relative_path]
+        else:
+            return cls.filelist[file]
+
+    @classmethod
+    def contains(cls, file: str | Path | File) -> bool:
         if isinstance(file, File):
             return file.relative_path in cls.filelist.keys()
+        if isinstance(file, Path):
+            return file.as_posix() in cls.filelist.keys()
         else:
             return file in cls.filelist.keys()
 
