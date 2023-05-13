@@ -3,6 +3,7 @@ from sys import exit
 from argparse import Action, ArgumentParser, RawTextHelpFormatter, _ArgumentGroup
 from collections.abc import Iterable
 from shutil import rmtree
+from .config import *
 
 from .ansicolor import *
 from .config import FreighterConfig, UserEnvironment
@@ -86,30 +87,36 @@ args = parser.parse_args()
 
 
 UserEnvironment.load(args.reset)
+if args.project:
+    os.chdir(args.project)
+
+if args.config:
+    FreighterConfig.load(args.config)
+else:
+    FreighterConfig.load()
+FreighterConfig.set_project_profile(args.build)
 
 
 def main():
     os.system("cls" if os.name == "nt" else "clear")
-    if not args.build:
+    if not sys.argv:
         parser.print_help()
-        parser.exit()
 
-    if args.project:
-        os.chdir(args.project)
-
-    if args.config:
-        FreighterConfig.load(args.config)
-    else:
-        FreighterConfig.load()
+    if args.cleanup:
+        cleanup()
 
     FileList.init()
     FileList.add(FreighterConfig.project_toml_path)
 
     if args.build:
-        FreighterConfig.set_project_profile(args.build)
         project = Project()
         project.build()
+        if args.cleanup:
+            cleanup()
 
-    if args.cleanup:
-        print(f"{CYAN}Cleaning up temporary files\n")
-        rmtree(FreighterConfig.project.TemporaryFilesFolder)
+
+def cleanup():
+    console_print(f'{CYAN}Attempting to clean up temporary files at "{Path(FreighterConfig.selected_profile.TemporaryFilesFolder).absolute().as_posix()}"')
+    if dir_exists(FreighterConfig.selected_profile.TemporaryFilesFolder) and args.cleanup:
+        rmtree(FreighterConfig.selected_profile.TemporaryFilesFolder)
+        console_print("Cleaned up.")
