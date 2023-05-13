@@ -11,31 +11,30 @@ from .exceptions import *
 if not isdir(FREIGHTER_LOCALAPPDATA):
     mkdir(FREIGHTER_LOCALAPPDATA)
 
-FILE_NOT_EXISTS = f"Freighter could not find the file: {WARN_COLOR}'{INFO_COLOR}"
 
-
-def file_exists(path: str | Path, throw=False) -> str:
-    path = Path(path)
+def file_exists(path: str | Path, throw=False, verbose=False) -> str:
+    path = Path(path).as_posix()
     if isfile(path):
+        if verbose:
+            console_print(f'{ORANGE}File Found "{path}"!')
         return normpath(path).replace("\\", "/")
     if throw:
-        raise FreighterException(FILE_NOT_EXISTS + f"{path}{WARN_COLOR}'")
+        raise FreighterException(f'The file "{path}{WARN_COLOR}" does not exist')
     else:
-        print(FILE_NOT_EXISTS + f"{path}{WARN_COLOR}'")
+        console_print(f'The file "{path}{WARN_COLOR}" does not exist')
     return ""
 
 
-DIR_NOT_EXISTS = f"Freighter could not find the folder {WARN_COLOR}'{INFO_COLOR}"
-
-
-def dir_exists(path: str | Path, throw=False) -> str:
-    path = Path(path)
+def dir_exists(path: str | Path, throw=False, verbose=False) -> str:
+    path = Path(path).as_posix()
     if isdir(path):
+        if verbose:
+            console_print(f'{ORANGE}Directory Found "{path}"!')
         return join(normpath(path), "").replace("\\", "/")
     if throw:
-        raise FreighterException(DIR_NOT_EXISTS + f"{path}{WARN_COLOR}'")
+        raise FreighterException(f'The directory "{path}{WARN_COLOR}" does not exist')
     else:
-        print(DIR_NOT_EXISTS + f"{path}{WARN_COLOR}'")
+        console_print(f'The directory "{path}{WARN_COLOR}" does not exist')
     return ""
 
 
@@ -79,10 +78,12 @@ class UserEnvironment:
 
         if reset:
             print("Finished")
+            print(f"Saved to {FREIGHTER_USERENVIRONMENT}")
             exit(0)
 
     @classmethod
-    def set_binutils(cls):
+    def set_binutils(cls, devkitpro_path: str):
+        cls.DevKitProPath = devkitpro_path
         cls.GPP = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-g++.exe"
         cls.GCC = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-gcc.exe"
         cls.LD = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-ld.exe"
@@ -107,20 +108,21 @@ class UserEnvironment:
                 for drive in drives:
                     path = f"{drive}/devkitPro/"
                     if dir_exists(path):
-                        cls.DevKitProPath = path
-                        cls.set_binutils()
+                        cls.set_binutils(path)
                         return
         elif PLATFORM == "Linux":
             expected_path = f"/opt/devkitpro/devkitPPC/bin/"
-            cls.DevKitProPath = expected_path
-            cls.set_binutils()
+            cls.set_binutils(expected_path)
             return
 
-        cls.DevKitProPath = input(f"Freighter could not find your devkitPro folder. Expected to be found at {expected_path}.\n Input the path to set it:") +"/"
-        cls.set_binutils()
+        cls.set_binutils(input(f"Freighter could not find your devkitPro folder. Expected to be found at {expected_path}.\n Input the path to set it:") + "/")
         while not cls.verify_devkitpro():
-            cls.DevKitProPath = input(f"Try again:") +"/"
-            cls.set_binutils()
+            cls.set_binutils(input(f"Try again:") + "/")
+
+    @classmethod
+    def set_dolphin_paths(cls, dolphin_user_path: str):
+        cls.DolphinUserPath = dolphin_user_path
+        cls.DolphinMaps = cls.DolphinUserPath + "Maps/"
 
     @classmethod
     def find_dolphin_documents_folder(cls) -> None:
@@ -128,19 +130,15 @@ class UserEnvironment:
         expected_path = ""
         if PLATFORM == "Windows":
             expected_path = str(Path.home().as_posix()) + "/Documents/Dolphin Emulator/"
-            cls.DolphinUserPath = dir_exists(expected_path)
-            cls.DolphinMaps = cls.DolphinUserPath + "Maps/"
+            cls.set_dolphin_paths(dir_exists(expected_path))
             return
         elif PLATFORM == "Linux":
             expected_path = "/.local/share/dolphin-emu/"
-            cls.DolphinUserPath = str(Path.home().as_posix()) + expected_path
-            cls.DolphinMaps = cls.DolphinUserPath + "Maps/"
+            cls.set_dolphin_paths(str(Path.home().as_posix()) + expected_path)
             return
-        cls.DolphinUserPath = input(f"Freighter could not find your Dolphin User folder. Expected to be found at {expected_path}.\n Input the path to set it:") +"/"
-        cls.DolphinMaps = cls.DolphinUserPath + "Maps/"
+        cls.set_dolphin_paths(input(f"Freighter could not find your Dolphin User folder. Expected to be found at {expected_path}.\n Input the path to set it:") + "/")
         while not cls.verify_dolphin():
-            cls.DolphinUserPath = input("Try again:") +"/"
-            cls.DolphinMaps = cls.DolphinUserPath + "Maps/"
+            cls.set_dolphin_paths(input("Try again:") + "/")
 
     @classmethod
     def verify_devkitpro(cls) -> bool:
@@ -185,7 +183,7 @@ class UserEnvironment:
 
 
 @dataclass
-class ProjectProfile:
+class Profile:
     ProjectName: str
     GameID: str
     InjectionAddress: int
@@ -235,9 +233,9 @@ class ProjectProfile:
 
 
 class FreighterConfig:
-    default_project: ProjectProfile
-    project: ProjectProfile
-    profiles = dict[str, ProjectProfile]()
+    default_project: Profile
+    selected_profile: Profile
+    profiles = dict[str, Profile]()
     project_toml_path: str
 
     @classmethod
@@ -249,16 +247,16 @@ class FreighterConfig:
         with open(cls.project_toml_path, "rb") as f:
             tomlconfig = tomllib.load(f)
 
-        for name, profile in tomlconfig["ProjectProfile"].items():
-            cls.profiles[name] = from_dict(data_class=ProjectProfile, data=profile)
+        for name, profile in tomlconfig["Profile"].items():
+            cls.profiles[name] = from_dict(data_class=Profile, data=profile)
 
         # Set the default profile as the first entry in the TOML
-        cls.default_project = next(iter(cls.profiles.values()))
+        cls.selected_profile = cls.default_project = next(iter(cls.profiles.values()))
 
     @classmethod
     def set_project_profile(cls, profile_name: str) -> None:
-        if profile_name == "Default":
-            cls.project = cls.default_project
+        if profile_name == "Default" or profile_name == None:
+            cls.selected_profile = cls.default_project
         else:
-            cls.project = cls.profiles[profile_name]
-        cls.project.verify_paths()
+            cls.selected_profile = cls.profiles[profile_name]
+        cls.selected_profile.verify_paths()
