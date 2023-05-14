@@ -157,8 +157,8 @@ class SourceFile(HeaderFile):
 
     def needs_recompile(self) -> bool:
         # Always recompile if the config has been modified
-        if FileList.filelist[FreighterConfig.project_toml_path].is_hash_same():
-            return False
+        if not FileList.filelist[FreighterConfig.project_toml_path].is_hash_same():
+            return True
 
         # Recompile deleted object files
         if not self.object_file.exists():
