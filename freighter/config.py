@@ -38,7 +38,7 @@ def dir_exists(path: str | Path, throw=False, verbose=False) -> str:
     return ""
 
 
-@dataclass
+
 class UserEnvironment:
     DevKitProPath = ""
     GPP = ""
@@ -54,8 +54,7 @@ class UserEnvironment:
     DolphinUserPath = ""
     DolphinMaps = ""
 
-    @classmethod
-    def load(cls, reset: bool = False) -> None:
+    def __new__(cls, reset: bool = False) -> None:
         if reset:
             print("Resetting UserEnvironment...")
             if isfile(FREIGHTER_USERENVIRONMENT):
@@ -234,12 +233,13 @@ class Profile:
 
 class FreighterConfig:
     default_project: Profile
-    selected_profile: Profile
+    profile: Profile
     profiles = dict[str, Profile]()
     project_toml_path: str
 
     @classmethod
-    def load(cls, project_toml_path: str = ""):
+    def __init__(cls, project_toml_path: str = ""):
+        cls.profiles 
         cls.project_toml_path = project_toml_path
         if not project_toml_path:
             cls.project_toml_path = file_exists(DEFAULT_CONFIG_PATH, True)
@@ -251,12 +251,12 @@ class FreighterConfig:
             cls.profiles[name] = from_dict(data_class=Profile, data=profile)
 
         # Set the default profile as the first entry in the TOML
-        cls.selected_profile = cls.default_project = next(iter(cls.profiles.values()))
-
+        cls.default_project = next(iter(cls.profiles.values()))
+        cls.profile = cls.default_project
     @classmethod
     def set_project_profile(cls, profile_name: str) -> None:
         if profile_name == "Default" or profile_name == None:
-            cls.selected_profile = cls.default_project
+            cls.profile = cls.default_project
         else:
-            cls.selected_profile = cls.profiles[profile_name]
-        cls.selected_profile.verify_paths()
+            cls.profile = cls.profiles[profile_name]
+        cls.profile.verify_paths()

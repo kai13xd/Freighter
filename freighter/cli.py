@@ -10,7 +10,7 @@ from .config import FreighterConfig, UserEnvironment
 from .constants import *
 from .devkit_tools import Project
 from .doltools import *
-from .filelist import FileList
+from .filelist import FileList, File
 from .hooks import *
 from .version import __version__
 
@@ -86,16 +86,23 @@ parser.add_argument("-reset", action="store_true", help="Reconfigures your UserE
 args = parser.parse_args()
 
 
-UserEnvironment.load(args.reset)
-if args.project:
-    os.chdir(args.project)
+UserEnvironment(args.reset)
+
+try:
+    if args.project:
+        os.chdir(Path(args.project).absolute())
+except:
+    pass
+
+FileList.init()
 
 if args.config:
-    FreighterConfig.load(args.config)
+    FreighterConfig(args.config)
 else:
-    FreighterConfig.load()
+    FreighterConfig()
 FreighterConfig.set_project_profile(args.build)
 
+File(FreighterConfig.project_toml_path)
 
 def main():
     os.system("cls" if os.name == "nt" else "clear")
@@ -105,9 +112,6 @@ def main():
     if args.cleanup:
         cleanup()
 
-    FileList.init()
-    FileList.add(FreighterConfig.project_toml_path)
-
     if args.build:
         project = Project()
         project.build()
@@ -116,7 +120,7 @@ def main():
 
 
 def cleanup():
-    console_print(f'{CYAN}Attempting to clean up temporary files at "{Path(FreighterConfig.selected_profile.TemporaryFilesFolder).absolute().as_posix()}"')
-    if dir_exists(FreighterConfig.selected_profile.TemporaryFilesFolder) and args.cleanup:
-        rmtree(FreighterConfig.selected_profile.TemporaryFilesFolder)
+    console_print(f'{CYAN}Attempting to clean up temporary files at "{Path(FreighterConfig.profile.TemporaryFilesFolder).absolute().as_posix()}"')
+    if dir_exists(FreighterConfig.profile.TemporaryFilesFolder) and args.cleanup:
+        rmtree(FreighterConfig.profile.TemporaryFilesFolder)
         console_print("Cleaned up.")

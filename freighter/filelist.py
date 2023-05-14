@@ -60,9 +60,6 @@ class File(PathLike):
                 self.restore_previous_state()
         FileList.add(self)
 
-    def set_dirty(self):
-        self.is_dirty = True
-
     def exists(self) -> bool:
         return isfile(self)
 
@@ -71,8 +68,10 @@ class File(PathLike):
             self.sha256hash = hashlib.file_digest(f, "sha256").hexdigest()
 
     def restore_previous_state(self):
-        # Need to deepcopy so we don't accidentally use object references
-        self.__dict__ = deepcopy(FileList.previous_state[self.relative_path].__dict__)
+        file = FileList.previous_state[self.relative_path]
+        self.dependencies = file.dependencies
+        if hasattr(file, "symbols"):
+            self.symbols = file.symbols
 
     def is_hash_same(self) -> bool:
         if self.is_dirty:
@@ -136,7 +135,7 @@ class HeaderFile(File):
 
                 # Check include folders
                 resolved_path = ""
-                for include_folder in FreighterConfig.selected_profile.IncludeFolders:
+                for include_folder in FreighterConfig.profile.IncludeFolders:
                     resolved_path = Path.joinpath(Path(include_folder), include_path)
                     if resolved_path.is_file():
                         dependencies.add(resolved_path.as_posix())
@@ -152,7 +151,7 @@ class SourceFile(HeaderFile):
     def __init__(self, path: str | Path) -> None:
         HeaderFile.__init__(self, path)
         if self.extension in [".c", ".cpp"]:
-            self.object_file_path = f"{FreighterConfig.selected_profile.TemporaryFilesFolder}{self.name}.o"
+            self.object_file_path = f"{FreighterConfig.profile.TemporaryFilesFolder}{self.name}.o"
             self.object_file = ObjectFile(self.object_file_path)
             FileList.add(self.object_file)
 
@@ -179,8 +178,8 @@ class SourceFile(HeaderFile):
 
 class ObjectFile(File):
     def __init__(self, path: str | Path) -> None:
-        File.__init__(self, path)
         self.symbols = dict[str, Symbol]()
+        File.__init__(self, path)
         self.source_file_name = self.stem
 
     def add_symbol(self, symbol: Symbol):
@@ -190,7 +189,7 @@ class ObjectFile(File):
 
 class FileList:
     previous_state: dict[str, File | SourceFile | ObjectFile]
-    filelist: dict[str, File | SourceFile | ObjectFile]
+    filelist = dict[str, File | SourceFile | ObjectFile]()
 
     @classmethod
     def init(cls):
@@ -203,7 +202,6 @@ class FileList:
                 cls.previous_state = dict[str, File]()
         except:
             cls.previous_state = dict[str, File]()
-        cls.filelist = dict[str, File]()
 
     @classmethod
     def save_state(cls):

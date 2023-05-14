@@ -92,7 +92,7 @@ def _get_function_symbol(lines: Iterator[tuple[int, str]], is_c_linkage: bool = 
 class Project:
     def __init__(self):
         # Instance variables
-        self.project = FreighterConfig.project  # Allows multiprocessing processes to have context
+        self.profile = FreighterConfig.profile  # Allows multiprocessing processes to have context
         self.bin_data: bytearray
         self.library_folders: str
         self.symbols = defaultdict(Symbol)
@@ -104,32 +104,32 @@ class Project:
         self.hooks = list[Hook]()
         self.compile_time = 0
         self.demangler_process = None
-        if not self.project.InjectionAddress:
-            self.project.InjectionAddress = self.dol.lastSection.address + self.dol.lastSection.size
-            print(f"{WHITE}Base address auto-set from end of Read-Only Memory: {INFO_COLOR}{self.project.InjectionAddress:x}\n{WHITE}Do not rely on this feature if your DOL uses .sbss2\n")
+        if not self.profile.InjectionAddress:
+            self.profile.InjectionAddress = self.dol.lastSection.address + self.dol.lastSection.size
+            print(f"{WHITE}Base address auto-set from end of Read-Only Memory: {INFO_COLOR}{self.profile.InjectionAddress:x}\n{WHITE}Do not rely on this feature if your DOL uses .sbss2\n")
 
-        if self.project.InjectionAddress % 32:
+        if self.profile.InjectionAddress % 32:
             print("Warning! DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
-        if self.project.SDA and self.project.SDA2:
-            self.project.CompilerArgs += ["-msdata=sysv"]
-            self.project.LDArgs += [
-                f"--defsym=_SDA_BASE_={hex(self.project.SDA)}",
-                f"--defsym=_SDA2_BASE_={hex(self.project.SDA2)}",
+        if self.profile.SDA and self.profile.SDA2:
+            self.profile.CompilerArgs += ["-msdata=sysv"]
+            self.profile.LDArgs += [
+                f"--defsym=_SDA_BASE_={hex(self.profile.SDA)}",
+                f"--defsym=_SDA2_BASE_={hex(self.profile.SDA2)}",
             ]
-        if self.project.InputSymbolMap:
-            self.project.OutputSymbolMapPaths.append(f"{UserEnvironment.DolphinMaps}{self.project.GameID}.map")
-        if self.project.StringHooks:
-            for address, string in self.project.StringHooks.items():
+        if self.profile.InputSymbolMap:
+            self.profile.OutputSymbolMapPaths.append(f"{UserEnvironment.DolphinMaps}{self.profile.GameID}.map")
+        if self.profile.StringHooks:
+            for address, string in self.profile.StringHooks.items():
                 self.hooks.append(StringHook(address, string))
 
-        self.final_object_file = ObjectFile(f"{self.project.TemporaryFilesFolder}{self.project.ProjectName}.o")
+        self.final_object_file = ObjectFile(f"{self.profile.TemporaryFilesFolder}{self.profile.ProjectName}.o")
         FileList.add(self.final_object_file)
-        self.gecko_table = GeckoCodeTable(self.project.GameID, self.project.ProjectName)
-        self.dol = DolFile(open(self.project.InputDolFile, "rb"))
+        self.gecko_table = GeckoCodeTable(self.profile.GameID, self.profile.ProjectName)
+        self.dol = DolFile(open(self.profile.InputDolFile, "rb"))
 
     def build(self) -> None:
         build_start_time = time()
-        makedirs(self.project.TemporaryFilesFolder, exist_ok=True)
+        makedirs(self.profile.TemporaryFilesFolder, exist_ok=True)
         self.__get_source_files()
         self.__process_pragmas()
 
@@ -163,22 +163,22 @@ class Project:
         self.__process_project()
         self.__analyze_final()
         self.__save_symbol_map()
-        self.bin_data = bytearray(open(self.project.TemporaryFilesFolder + self.project.ProjectName + ".bin", "rb").read())
+        self.bin_data = bytearray(open(self.profile.TemporaryFilesFolder + self.profile.ProjectName + ".bin", "rb").read())
         print(f"{ORANGE}Begin Patching...")
         self.__apply_gecko()
         self.__apply_hooks()
-        self.__patch_osarena_low(self.dol, self.project.InjectionAddress + len(self.bin_data))
-        with open(self.project.OutputDolFile, "wb") as f:
+        self.__patch_osarena_low(self.dol, self.profile.InjectionAddress + len(self.bin_data))
+        with open(self.profile.OutputDolFile, "wb") as f:
             self.dol.save(f)
         self.build_time = time() - build_start_time
-        print(f'\n{GREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {INFO_COLOR}"{self.project.OutputDolFile}"{GREEN}!')
+        print(f'\n{GREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {INFO_COLOR}"{self.profile.OutputDolFile}"{GREEN}!')
 
         self.__print_extras()
         self.final_object_file.calculate_hash()
         FileList.save_state()
 
     def __print_extras(self):
-        with open(self.project.OutputDolFile, "rb") as f:
+        with open(self.profile.OutputDolFile, "rb") as f:
             md5 = hashlib.file_digest(f, "md5").hexdigest()
             sha_256 = hashlib.file_digest(f, "sha256").hexdigest()
             sha_512 = hashlib.file_digest(f, "sha512").hexdigest()
@@ -201,7 +201,7 @@ class Project:
         """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
         args = (UserEnvironment.OBJDUMP, objectfile_path.relative_path) + args
         if not outpath:
-            outpath = self.project.TemporaryFilesFolder + objectfile_path.relative_path.split("/")[-1] + ".s"
+            outpath = self.profile.TemporaryFilesFolder + objectfile_path.relative_path.split("/")[-1] + ".s"
         with open(outpath, "w") as f:
             subprocess.call(args, stdout=f)
         return outpath
@@ -210,7 +210,7 @@ class Project:
         """Dumps the output from DevKitPPC's powerpc-eabi-nm.exe to a .txt file"""
         args = (UserEnvironment.NM, object_path) + args
         if not outpath:
-            outpath = self.project.TemporaryFilesFolder + object_path.split("/")[-1].rstrip(".o") + ".nm"
+            outpath = self.profile.TemporaryFilesFolder + object_path.split("/")[-1].rstrip(".o") + ".nm"
         with open(outpath, "w") as f:
             subprocess.call(args, stdout=f)
         return outpath
@@ -219,17 +219,17 @@ class Project:
         """Dumps the output from DevKitPPC's powerpc-eabi-readelf.exe to a .txt file"""
         args = (UserEnvironment.READELF, object_path.relative_path) + args
         if not outpath:
-            outpath = self.project.TemporaryFilesFolder + object_path.relative_path.split("/")[-1] + ".readelf"
+            outpath = self.profile.TemporaryFilesFolder + object_path.relative_path.split("/")[-1] + ".readelf"
         with open(outpath, "w") as f:
             subprocess.call(args, stdout=f)
         return outpath
 
     def __get_source_files(self):
-        for folder in self.project.SourceFolders:
+        for folder in self.profile.SourceFolders:
             for file in glob(f"{folder}/**/**.c", recursive=True) + glob(f"{folder}/**/**.cpp", recursive=True):
-                if file in self.project.IgnoredSourceFiles:
+                if file in self.profile.IgnoredSourceFiles:
                     continue
-                self.source_files.append(SourceFile(Path(file)))
+                self.source_files.append(SourceFile(file))
 
     def __compile(self, compile_list: list[SourceFile]):
         with ProcessPoolExecutor() as executor:
@@ -249,7 +249,7 @@ class Project:
                     print(f'\n{ERROR} failed to compile:{INFO_COLOR}\n{err}")')
                 else:
                     print(f'{SUCCESS} "{source_file}"{INFO_COLOR}{out}')
-                    source_file.object_file.set_dirty()
+                    source_file.is_dirty = True
 
             if halt_compilation:
                 source_file_error = ""
@@ -260,15 +260,15 @@ class Project:
     def compile(self, source_file: SourceFile, output: ObjectFile) -> tuple[int, SourceFile, str, str]:
         args = []
         if source_file.extension == ".cpp":
-            args = [UserEnvironment.GPP, "-c"] + self.project.GPPArgs
+            args = [UserEnvironment.GPP, "-c"] + self.profile.GPPArgs
         else:
-            args = [UserEnvironment.GCC, "-c"] + self.project.GCCArgs
-        args += self.project.CompilerArgs
-        for path in self.project.IncludeFolders:
+            args = [UserEnvironment.GCC, "-c"] + self.profile.GCCArgs
+        args += self.profile.CompilerArgs
+        for path in self.profile.IncludeFolders:
             args.append("-I" + path)
         args.extend([source_file.relative_path, "-o", output.relative_path, "-fdiagnostics-color=always"])
 
-        process = subprocess.Popen(args,shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(args, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = process.communicate()
         return process.returncode, source_file, out.decode(), err.decode()
 
@@ -308,7 +308,7 @@ class Project:
                     symbol.is_absolute = True
                 symbol.is_undefined = False
                 if not symbol.source_file:
-                    if object_file.source_file_name == self.project.ProjectName:
+                    if object_file.source_file_name == self.profile.ProjectName:
                         symbol.source_file = ""  # Temporary workaround for symbols sourced from external libs
                     else:
                         symbol.source_file = object_file.source_file_name
@@ -316,7 +316,7 @@ class Project:
     def __load_symbol_definitions(self):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
         print(f"{ORANGE}Loading manually defined symbols...")
-        for file in Path(self.project.SymbolsFolder).glob("*.txt"):
+        for file in Path(self.profile.SymbolsFolder).glob("*.txt"):
             with open(file.as_posix(), "r") as f:
                 lines = f.readlines()
 
@@ -336,7 +336,7 @@ class Project:
 
     def __process_pragmas(self):
         for source_file in self.source_files:
-            if source_file in self.project.IgnoreHooks:
+            if source_file in self.profile.IgnoreHooks:
                 continue
             is_c_linkage = False
             if source_file.extension == ".c":
@@ -386,7 +386,7 @@ class Project:
 
     def __generate_linkerscript(self):
         written_symbols = set[Symbol]()  # Keep track of duplicates
-        linkerscript_file = self.project.TemporaryFilesFolder + self.project.ProjectName + "_linkerscript.ld"
+        linkerscript_file = self.profile.TemporaryFilesFolder + self.profile.ProjectName + "_linkerscript.ld"
         with open(linkerscript_file, "w") as f:
 
             def write_section(section: str):
@@ -425,14 +425,14 @@ class Project:
             write_section(".sbss2")
 
             f.write("\t/DISCARD/ :\n\t{\n")
-            for section in self.project.DiscardSections:
+            for section in self.profile.DiscardSections:
                 f.write(f"\t\t*({section}*);\n")
             f.write("\n")
-            for lib in self.project.DiscardLibraryObjects:
+            for lib in self.profile.DiscardLibraryObjects:
                 f.write(f"\t\t*{lib}(*);\n")
             f.write("\t}\n\n")
 
-            f.write(f"\t. = 0x{self.project.InjectionAddress:4x};\n")
+            f.write(f"\t. = 0x{self.profile.InjectionAddress:4x};\n")
             f.write(
                 "\t.sdata ALIGN(0x20):\n\t{\n\t\t*(.sdata*)\n\t}\n\n"
                 "\t.sbss ALIGN(0x20):\n\t{\n\t\t*(.sbss*)\n\t}\n\n"
@@ -444,37 +444,37 @@ class Project:
                 "\t.text ALIGN(0x20):\n\t{\n\t\t*(.text*)\n\t}\n"
                 "}"
             )
-        self.project.LinkerScripts.append(linkerscript_file)
+        self.profile.LinkerScripts.append(linkerscript_file)
 
     def __link(self):
         print(f"{INFO_COLOR}Linking...{ORANGE}")
         args = [UserEnvironment.GPP]
-        for arg in self.project.LDArgs:
+        for arg in self.profile.LDArgs:
             args.append("-Wl," + arg)
         for file in self.object_files:
             args.append(file.relative_path)
-        for linkerscript in self.project.LinkerScripts:
+        for linkerscript in self.profile.LinkerScripts:
             args.append("-T" + linkerscript)
-        args.extend(["-Wl,-Map", f"{self.project.TemporaryFilesFolder + self.project.ProjectName}.map"])
+        args.extend(["-Wl,-Map", f"{self.profile.TemporaryFilesFolder + self.profile.ProjectName}.map"])
         args.extend(["-o", self.final_object_file.relative_path])
-        if self.project.VerboseOutput:
+        if self.profile.VerboseOutput:
             print(f"{PURPLE}{args}")
         exit_code = subprocess.call(args, stdout=subprocess.PIPE)
         if exit_code:
             raise RuntimeError(f'{ERROR} failed to link object files"\n')
         else:
-            print(f"{LINKED}{PURPLE} -> {INFO_COLOR}{self.project.TemporaryFilesFolder + self.project.ProjectName}.o")
+            print(f"{LINKED}{PURPLE} -> {INFO_COLOR}{self.profile.TemporaryFilesFolder + self.profile.ProjectName}.o")
 
     def __process_project(self):
         with open(self.final_object_file, "rb") as f:
             elf = ELFFile(f)
-            with open(self.project.TemporaryFilesFolder + self.project.ProjectName + ".bin", "wb") as data:
+            with open(self.profile.TemporaryFilesFolder + self.profile.ProjectName + ".bin", "wb") as data:
                 for symbol in elf.iter_sections():
-                    if symbol.header["sh_addr"] < self.project.InjectionAddress:
+                    if symbol.header["sh_addr"] < self.profile.InjectionAddress:
                         continue
                     # Filter out sections without SHF_ALLOC attribute
                     if symbol.header["sh_flags"] & 0x2:
-                        data.seek(symbol.header["sh_addr"] - self.project.InjectionAddress)
+                        data.seek(symbol.header["sh_addr"] - self.profile.InjectionAddress)
                         data.write(symbol.data())
 
     def __analyze_readelf(self, path: str):
@@ -499,7 +499,7 @@ class Project:
                     symbol.hex_address = "0x" + address
                     symbol.address = int(address, 16)
                     symbol.size = int(size)
-                    symbol.library_file = self.project.ProjectName + ".o"
+                    symbol.library_file = self.profile.ProjectName + ".o"
                     if ndx == "ABS":
                         continue
                     symbol.section = section_map[int(ndx)]
@@ -523,19 +523,19 @@ class Project:
         if len(self.bin_data) > 0:
             new_section: Section
             if len(self.dol.textSections) <= DolFile.MaxTextSections:
-                new_section = TextSection(self.project.InjectionAddress, self.bin_data)
+                new_section = TextSection(self.profile.InjectionAddress, self.bin_data)
             elif len(self.dol.dataSections) <= DolFile.MaxDataSections:
-                new_section = DataSection(self.project.InjectionAddress, self.bin_data)
+                new_section = DataSection(self.profile.InjectionAddress, self.bin_data)
             else:
                 raise FreighterException("DOL is full! Cannot allocate any new sections.")
             self.dol.append_section(new_section)
 
-        with open(self.project.OutputDolFile, "wb") as f:
+        with open(self.profile.OutputDolFile, "wb") as f:
             self.dol.save(f)
 
     def __apply_gecko(self):
-        for gecko_txt in Path(self.project.GeckoFolder).glob("*.txt*"):
-            if gecko_txt.as_posix() in self.project.IgnoredGeckoFiles:
+        for gecko_txt in Path(self.profile.GeckoFolder).glob("*.txt*"):
+            if gecko_txt.as_posix() in self.profile.IgnoredGeckoFiles:
                 continue
             for child in GeckoCodeTable.from_text(open(gecko_txt, "r").read()):
                 self.gecko_table.add_child(child)
@@ -554,7 +554,7 @@ class Project:
                 for gecko_command in gecko_code:
                     if gecko_command.codetype not in SupportedGeckoCodetypes:
                         print(gecko_command)
-            vaddress = self.project.InjectionAddress + len(self.bin_data)
+            vaddress = self.profile.InjectionAddress + len(self.bin_data)
             gecko_data = bytearray()
             gecko_meta = []
 
@@ -586,11 +586,11 @@ class Project:
         self.gecko_table.apply(self.dol)
 
     def __save_symbol_map(self):
-        if not self.project.InputSymbolMap:
+        if not self.profile.InputSymbolMap:
             print(f"{ORANGE}No input symbol map. Skipping.")
             return
 
-        if not self.project.OutputSymbolMapPaths:
+        if not self.profile.OutputSymbolMapPaths:
             print(f"{ORANGE}No paths found for symbol map output. Skipping.")
             return
 
@@ -612,7 +612,7 @@ class Project:
                     symbol_data["bind"], symbol_data["type"] = symbol.entry["st_info"].values()
                     if symbol_data["type"] in ["STT_NOTYPE", "STT_FILE"]:
                         continue
-                    if symbol.entry["st_value"] < self.project.InjectionAddress:
+                    if symbol.entry["st_value"] < self.profile.InjectionAddress:
                         continue
                     symbol_data["address"] = symbol.entry["st_value"]
                     symbol_data["size"] = symbol.entry["st_size"]
@@ -631,7 +631,7 @@ class Project:
                     #     )
                     #     print(f"{GREEN}Added")
                     section_symbols[symbol_data["section"]].append(symbol_data)
-            with open(self.project.InputSymbolMap, "r+") as f:
+            with open(self.profile.InputSymbolMap, "r+") as f:
                 contents = f.readlines()
                 insert_index = {}
                 section = ""
@@ -644,13 +644,13 @@ class Project:
                 for section in insert_index:
                     if section in section_symbols.keys():
                         for symbol in section_symbols[section]:
-                            insert_str = f'  {symbol["address"] - self.project.InjectionAddress:08X} {symbol["size"]:06X} {symbol["address"]:08X}  4 '
+                            insert_str = f'  {symbol["address"] - self.profile.InjectionAddress:08X} {symbol["size"]:06X} {symbol["address"]:08X}  4 '
                             if symbol["name"] in self.symbols:
                                 symbol = self.symbols[symbol["name"]]
                                 insert_str += f"{symbol.demangled_name}\t {symbol.source_file} {symbol.library_file}\n"
                             contents.insert(insert_index[section] + insert_offset, insert_str)
                             insert_offset += 1
-                for path in self.project.OutputSymbolMapPaths:
+                for path in self.profile.OutputSymbolMapPaths:
                     open(path, "w").writelines(contents)
 
     @cache
@@ -662,7 +662,7 @@ class Project:
         self.demangler_process.stdin.flush()
 
         demangled = self.demangler_process.stdout.readline().decode().rstrip()
-        if self.project.VerboseOutput:
+        if self.profile.VerboseOutput:
             print(f" 🧼 {INFO_COLOR}{string}{PURPLE} -> {GREEN}{demangled}")
 
         return demangled
@@ -715,11 +715,11 @@ class Project:
         dol.seek(0x800F18CC)
         write_ori(dol, 0, 3, stack_end & 0xFFFF)
 
-        size = rom_end - self.project.InjectionAddress
+        size = rom_end - self.profile.InjectionAddress
         print(
             f"{INFO_COLOR}✨What's new:\n{INFO_COLOR}Injected Binary Size: {HEX}{ORANGE}{size:x}{GREEN} Bytes or"
             f" {ORANGE}~{size/1024:.2f}{GREEN} KiBs\n{INFO_COLOR}Injection Address @"
-            f" {HEX}{self.project.InjectionAddress:x}\n{INFO_COLOR}New ROM End @ {HEX}{rom_end:x}\n{INFO_COLOR}Stack"
+            f" {HEX}{self.profile.InjectionAddress:x}\n{INFO_COLOR}New ROM End @ {HEX}{rom_end:x}\n{INFO_COLOR}Stack"
             f" Moved To: {HEX}{stack_addr:x}\n{INFO_COLOR}Stack End @ {HEX}{stack_end:x}\n{INFO_COLOR}New OSArenaLo @"
             f" {HEX}{osarena_lo:x}\n{INFO_COLOR}Debug Stack Moved To: {HEX}{db_stack_addr:x}\n{INFO_COLOR}Debug Stack"
             f" End @ {HEX}{db_stack_end:x}\n{INFO_COLOR}New Debug OSArenaLo @ {HEX}{db_osarena_lo:x}"
