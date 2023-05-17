@@ -38,7 +38,6 @@ def dir_exists(path: str | Path, throw=False, verbose=False) -> str:
     return ""
 
 
-
 class UserEnvironment:
     DevKitProPath = ""
     GPP = ""
@@ -231,7 +230,19 @@ class Profile:
             file_exists(file)
 
 
+@dataclass
+class Banner:
+    BannerImage: str
+    Title: str
+    GameName: str
+    Maker: str
+    ShortMaker: str
+    Description: str
+    OutputPath: str
+
+
 class FreighterConfig:
+    banner_config: Banner
     default_project: Profile
     profile: Profile
     profiles = dict[str, Profile]()
@@ -239,7 +250,7 @@ class FreighterConfig:
 
     @classmethod
     def __init__(cls, project_toml_path: str = ""):
-        cls.profiles 
+        cls.profiles
         cls.project_toml_path = project_toml_path
         if not project_toml_path:
             cls.project_toml_path = file_exists(DEFAULT_CONFIG_PATH, True)
@@ -247,12 +258,15 @@ class FreighterConfig:
         with open(cls.project_toml_path, "rb") as f:
             tomlconfig = tomllib.load(f)
 
+        cls.banner_config = from_dict(data_class=Banner,data=tomlconfig["Banner"])
+
         for name, profile in tomlconfig["Profile"].items():
             cls.profiles[name] = from_dict(data_class=Profile, data=profile)
 
         # Set the default profile as the first entry in the TOML
         cls.default_project = next(iter(cls.profiles.values()))
         cls.profile = cls.default_project
+
     @classmethod
     def set_project_profile(cls, profile_name: str) -> None:
         if profile_name == "Default" or profile_name == None:

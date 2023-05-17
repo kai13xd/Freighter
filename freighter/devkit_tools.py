@@ -16,11 +16,12 @@ from elftools.elf.elffile import ELFFile, SymbolTableSection
 from geckolibs.gct import GeckoCodeTable, GeckoCommand
 from geckolibs.geckocode import AsmInsert, AsmInsertXOR
 
-from .config import FreighterConfig, UserEnvironment, file_exists
+from .config import *
 from .constants import *
-from .exceptions import FreighterException
-from .filelist import FileList, ObjectFile, SourceFile, Symbol
+from .exceptions import *
+from .filelist import *
 from .hooks import *
+from .fileformats import *
 
 
 def glob(query: str, recursive: bool = False):
@@ -170,12 +171,26 @@ class Project:
         self.__patch_osarena_low(self.dol, self.profile.InjectionAddress + len(self.bin_data))
         with open(self.profile.OutputDolFile, "wb") as f:
             self.dol.save(f)
+        self.__create_banner(FreighterConfig.banner_config)
         self.build_time = time() - build_start_time
         print(f'\n{GREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {INFO_COLOR}"{self.profile.OutputDolFile}"{GREEN}!')
-
         self.__print_extras()
         self.final_object_file.calculate_hash()
         FileList.save_state()
+
+    def __create_banner(self, config: Banner):
+        if config:
+            console_print("Generating game banner...")
+            texture = GameCubeTexture(config.BannerImage)
+            banner = BNR()
+            banner.banner_image.data = texture.encode(ImageFormat.RGB5A3)
+            banner.description.data = config.Description
+            banner.title.data = config.Title
+            banner.gamename.data = config.GameName
+            banner.maker.data = config.Maker
+            banner.short_maker.data = config.ShortMaker
+            banner.save(config.OutputPath)
+            console_print(f'Banner saved to "{config.OutputPath}"')
 
     def __print_extras(self):
         with open(self.profile.OutputDolFile, "rb") as f:
