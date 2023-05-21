@@ -1,7 +1,6 @@
-from platform import system
 from .ansicolor import *
-from os import path
-from pathlib import Path
+import re
+from enum import IntEnum
 
 HOCOTATE_RED = AnsiTrueColor(251, 58, 43)
 HOCOTATE_RED_BACKGROUND = AnsiTrueColor(251, 58, 43, is_background=True)
@@ -27,26 +26,6 @@ SUCCESS = ansi_format("✔️ Success!", SUCCESS_COLOR, AnsiAttribute.BOLD)
 LINKED = ansi_format("✔️ Linked!", SUCCESS_COLOR, AnsiAttribute.BOLD)
 HEX = f"{PURPLE_COLOR}0x{SUCCESS_COLOR}"
 
-PLATFORM = system()
-
-GPP = "powerpc-eabi-g++.exe"
-GCC = "powerpc-eabi-gcc.exe"
-LD = "powerpc-eabi-ld.exe"
-AR = "powerpc-eabi-ar.exe"
-OBJDUMP = "powerpc-eabi-objdump.exe"
-OBJCOPY = "powerpc-eabi-objcopy.exe"
-NM = "powerpc-eabi-gcc-nm.exe"
-READELF = "powerpc-eabi-readelf.exe"
-GBD = "powerpc-eabi-gdb.exe"
-CPPFLIT = "powerpc-eabi-c++filt.exe"
-
-DEFAULT_CONFIG_PATH = "ProjectConfig.toml"
-
-
-FREIGHTER_LOCALAPPDATA = path.expandvars("%LOCALAPPDATA%/Freighter/")
-FREIGHTER_USERENVIRONMENT = FREIGHTER_LOCALAPPDATA + "UserEnvironment.toml"
-
-import re
 
 RE_STRING = r'"(.*)"'
 RE_STRING_REPLACE = rf'{ORANGE}"{CYAN}\1{ORANGE}"{AnsiAttribute.RESET}'
@@ -60,7 +39,18 @@ INFO = f"{AnsiAttribute.RESET}[{AnsiAttribute.BOLD}{CYAN}Info{AnsiAttribute.RESE
 WARN = f"{AnsiAttribute.RESET}[{AnsiAttribute.BOLD}{ORANGE}WARN{AnsiAttribute.RESET}] "
 
 
-def console_print(string: str, type = "Info") -> None:
+class PrintType(IntEnum):
+    ERROR = 0
+    WARN = 1
+    INFO = 2
+    VERBOSE = 3
+
+
+def console_print(string: str, type=PrintType.INFO) -> None:
+    from .cli import Arguments
+
+    if not Arguments.verbose and type == PrintType.VERBOSE:
+        return
     string = re.sub(RE_STRING, RE_STRING_REPLACE, string)
     string = re.sub(RE_HEX, RE_HEX_REPLACE, string)
     if type == "Info":

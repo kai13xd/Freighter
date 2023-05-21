@@ -1,6 +1,5 @@
 from io import BytesIO
 from struct import pack, unpack
-from dataclasses import dataclass
 from typing import Type, Generic, cast, get_args, Any
 
 from os import SEEK_CUR
@@ -48,7 +47,6 @@ class BinaryFile(BytesIO):
         self.write(b"\x00" * (next_aligned_pos - self.tell()))
 
 
-@dataclass
 class FixedSizeBinaryData:
     size: int
     offset: int
@@ -71,7 +69,7 @@ class FixedSizeBinaryData:
         if isinstance(data, str):
             bytestring = data.encode("cp1252")
             # if b"\xc2" in bytestring:
-                # bytestring = bytestring.replace(b"\xc2", b"")
+            # bytestring = bytestring.replace(b"\xc2", b"")
             self._bytes[0 : len(bytestring)] = bytestring
         else:
             self._bytes[0 : len(data)] = data

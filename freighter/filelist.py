@@ -194,13 +194,10 @@ class FileList:
     @classmethod
     def init(cls):
         filehash_path = "temp/filehashes.json"
-        try:
-            if isfile(filehash_path):
-                with open(filehash_path, "r") as f:
-                    cls.previous_state = jsonpickle.loads(f.read())
-            else:
-                cls.previous_state = dict[str, File]()
-        except:
+        if isfile(filehash_path):
+            with open(filehash_path, "r") as f:
+                cls.previous_state = jsonpickle.loads(f.read())
+        else:
             cls.previous_state = dict[str, File]()
 
     @classmethod

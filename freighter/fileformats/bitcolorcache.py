@@ -1,10 +1,7 @@
-from dataclasses import dataclass
-
-
 """
-bitmask reference because I forget
+A bitmask reference because I always forget
 
-bits dec hex
+Bits Dec Hex
 ---- --- ---
 1    1   0x1
 2    3   0x3
@@ -14,48 +11,56 @@ bits dec hex
 6    63  0x3f
 7    127 0x7f
 8    255 0x255
+
+This is mostly a means to speed up CPU encoding by utilizing a cache look up table. 
+
+Curious about ways to improve texture quality through dithering.
+
+I also wonder if there is a clever way to remap colors to better reconstruct the 
+original image when decoding
+
+For example these do not remap within the full color range of 0-255:
+3-bit range 0-252
+5-bit range 0-248
+7-bit range 0-254
 """
-
-# Truncated color values
-BITCOLOR_CACHE = []
-
 color_range = range(256)
-result = []
+
+# Raw encoded value
+BITCOLOR_CACHE: list[list[int]] = [[], [], [], [], [], [], [], []]
+
+# Multiplied by a factor to map back to 0-255 range
+TRUNCATED_BITCOLOR_CACHE: list[list[int]] = [[], [], [], [], [], [], [], []]
+
+# lmao
 for i in color_range:
-    result.append(0)  # 0 lmao
-BITCOLOR_CACHE.append(result)
-result = []
+    BITCOLOR_CACHE[0].append(0)
+    TRUNCATED_BITCOLOR_CACHE[0].append(0)
+# 1 bit
 for i in color_range:
-    # result.append((i >> 7) * 255)  # 1 bit
-    result.append(i >> 7)  # 1 bit
-BITCOLOR_CACHE.append(result)
-result = []
+    BITCOLOR_CACHE[1].append(i >> 7)
+    TRUNCATED_BITCOLOR_CACHE[1].append((i >> 7) * 255)
+# 2-bit
 for i in color_range:
-    # result.append((i >> 6) * 85)  # 2-bit
-    result.append(i >> 6)  # 2-bit
-BITCOLOR_CACHE.append(result)
-result = []
+    BITCOLOR_CACHE[2].append(i >> 6)
+    TRUNCATED_BITCOLOR_CACHE[2].append((i >> 6) * 85)
+# 3-bit
 for i in color_range:
-    # result.append((i >> 5) * 36)  # 3-bit
-    result.append(i >> 5)  # 3-bit
-BITCOLOR_CACHE.append(result)
-result = []
+    BITCOLOR_CACHE[3].append(i >> 5)
+    TRUNCATED_BITCOLOR_CACHE[3].append((i >> 5) * 36)
+# 4-bit
 for i in color_range:
-    # result.append((i >> 4) * 17)  # 4-bit
-    result.append(i >> 4)  # 4-bit
-BITCOLOR_CACHE.append(result)
-result = []
+    BITCOLOR_CACHE[4].append(i >> 4)
+    TRUNCATED_BITCOLOR_CACHE[4].append((i >> 4) * 17)
+# 5-bit
 for i in color_range:
-    # result.append((i >> 3) * 8)  # 5-bit
-    result.append(i >> 3)  # 5-bit
-BITCOLOR_CACHE.append(result)
-result = []
+    BITCOLOR_CACHE[5].append(i >> 3)
+    TRUNCATED_BITCOLOR_CACHE[5].append((i >> 3) * 8)
+# 6-bit
 for i in color_range:
-    # result.append((i >> 2) * 4)  # 6-bit
-    result.append(i >> 2)  # 6-bit
-BITCOLOR_CACHE.append(result)
-result = []
+    BITCOLOR_CACHE[6].append(i >> 2)
+    TRUNCATED_BITCOLOR_CACHE[6].append((i >> 2) * 4)
+# 7-bit
 for i in color_range:
-    # result.append((i >> 1) * 2)  # 7-bit
-    result.append(i >> 1)  # 7-bit
-BITCOLOR_CACHE.append(result)
+    BITCOLOR_CACHE[7].append(i >> 1)
+    TRUNCATED_BITCOLOR_CACHE[7].append((i >> 1) * 2)

@@ -4,6 +4,7 @@ Freighter is command-line based toolkit for setting up and building C/C++ projec
 
 - Project management using TOML configuration files
 - Incremental build support utilizing multiprocessing
+- Generating .bnr file to customize the banner that is read from Dolphin and the GameCube BIOS.
 
 # Installation
 
@@ -17,67 +18,91 @@ This package is made available through PyPi:
 # Reccommendations
 
 - [Window's Terminal](https://github.com/microsoft/terminal): Supports ANSI color codes and unicode emoji characters that Freighter uses to colorize the console ouput.
-- [VSCode](https://code.visualstudio.com/)
+- [VSCode](https://code.visualstudio.com/): Personal perferred code editor that is feature rich thanks to the community.
+- [Ghidra](https://ghidra-sre.org/): A GameCube modder's best friend
 
-# Configuration
+# Command Line
 
-Freighter is a command line based tool that uses TOML configuration format for your C/C++ projects.
+After installation open your cli of choice and enter `freighter`
+
+## Options
+
+```
+-h : show this help message and exit
+
+--help : show this help message and exit
+
+-help : Shows the help prompt.
+
+-new <Project Name> [Path]: Generates a new project at the current working directory with the specified project name.
+
+-build profile name: Builds the project with the selected profile.
+Defaults to first profile if no arguments are passed.
+
+-project [project directory]: The project directory containing a ProjectConfig.toml.
+If this option is not passed, Freighter assumes the current working directory is the project directory
+
+-config [path to TOML file]: Overrides the default project config path.
+
+-clean : Removes all temporary files and resets the cache. Useful if Freighter throws an error about missing symbols if the filecache becomes bad.
+
+-verbose : Print extra info to the console
+
+-reset : Reconfigures your UserEnvironment.toml
+```
+
+
+# Project Configuration
+
+Freighter uses TOML configuration format your modding projects.
+You can generate a new project by using `freighter new ProjectName`
 
 ## ProjectConfig.toml
 
 ```toml
-# The default ProjectProfile to use as fallback
-DefaultProjectProfile = "Debug"
+[Banner]
+BannerImage = "banner.png"
+Title = "GameTitle"
+GameName = "GameTitle"
+Maker = "MyOrganization"
+ShortMaker = "MyOrganization"
+Description = "This is my game's description!"
+OutputPath = "build/files/opening.bnr"
 
-
-
-# This defines a ProjectProfile that passes all important project information about
-# how to build your source files to Freighter
-[ProjectProfile.Debug]
-Name = "MyModdingProject"
-GameID = "GAME01"
-InputSymbolMap = "GPVE01.map"
-SDA = 0x8051C5C0
-SDA2 = 0x8051E2A0
-EntryFunction = "Entry"
+[Profile.Debug]
+ProjectName = "GameTitle"
+GameID = "FREI01"
+InjectionAddress = 134217728
 InputDolFile = "main.dol"
-InjectionAddress = 0x80520E00
 OutputDolFile = "build/sys/main.dol"
-SymbolMapOutputPaths = ["build/files/Pikmin2UP.map"]
-LinkerScripts = ["linkerscript.ld"]
-SourceFolders = ["souce/"]
-IncludeFolders = ["source/headers/"]
-IgnoredSourceFiles = ["source/some.c", "souce/some.cpp"]
-VerboseOutput = true
-CleanUpTemporaryFiles = false
-CommonArgs = [
-    "-O3",
-    "-fno-exceptions",
-    "-Wall",
+IncludeFolders = ['source/']
+SourceFolders = ['includes/']
+SDA = 0
+SDA2 = 0
+GeckoFolder = "gecko/"
+SymbolsFolder = "symbols/"
+LinkerScripts = []
+TemporaryFilesFolder = "temp/"
+InputSymbolMap = ""
+OutputSymbolMapPaths = []
+StringHooks = {}
+IgnoredSourceFiles = []
+IgnoredGeckoFiles = []
+IgnoreHooks = []
+DiscardLibraryObjects = []
+DiscardSections = []
+CompilerArgs = []
+GCCArgs = []
+GPPArgs = []
+LDArgs = []
 
-]
-GCCArgs = [
-    "-std=c17", # The C standard to compile with
-]
-GPPArgs = [
-    "-std=gnu++2b", # The C++ standard to compile with
-]
-LDArgs = [
-    "-print-gc-sections",   # Shows what symbols are getting thrown out
-]
-```
-## UserEnv.toml
 
-```toml
-# While Freighter does it's best to find external tools you can define explicit paths if they are installed in a non-default way
-DolphinDocumentsFolder = "C:/Users/Kai/Documents/Dolphin Emulator"
-DevKitPPCFolder = "F:/devkitPro/devkitPPC/bin/"
 ```
 
 # Credits
 
 **[Yoshi2 (RenolY2)](https://github.com/RenolY2)**: The OG who made C-kit who made alot of the tools for Pikmin 2 and MKDD. He helped raise baby Kai when he was first learning hex and figuring out how pointers worked. He made a ton of tools that operate on Gamecube era gamefiles and really made the modding scene pop off. Thank you!
 
-**[Minty Meeo](https://github.com/Minty-Meeo)**: Mostly found around the Pikmin 1 scene but recently has been working on stuff on Pikmin 2. He has made alot of great changes to C-kit such as relocating the stack frame and cleaning up the code for injection hooks.
+**[Minty Meeo](https://github.com/Minty-Meeo)**: He has made alot of great changes to C-kit such as relocating the stack frame and cleaning up the code for injection hooks.
 
-**YoshiFirebird**: This man helped me ALOT way back when I was first learning C++. He originally had the nice idea of using the `#pragma` keyword where C-kit would preprocess the source file and import the injection address wherever it found it. Saved time having to backtrack to the build.py when I wanted to adjust the codecave site. Also doesn't make intellisense yell at you hah.
+**Yoshifirebird**: This man helped me a TON way back when I was first learning C++. He was the one who had the original idea of using the `#pragma` keyword so Freighter could preprocess the source file to extract the symbol name and the hook injection address. This is a great feature because you can write the injection address inline with your code that you can easily copy paste into Ghidra to

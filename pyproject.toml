@@ -1,7 +1,7 @@
 [project]
 name = "freighter"
 dynamic = ["version"]
-dependencies = ["dacite", "dolreader", "jsonpickle", "pyelftools", "geckolibs"]
+dependencies = ["dacite", "pillow", "moderngl", "dolreader", "jsonpickle", "pyelftools", "geckolibs"]
 
 description = "Kai's GameCube Toolkit enabling C/C++ code injection into .dol executables."
 readme = "README.md"
@@ -38,11 +38,8 @@ requires = ["setuptools>=67.6.1", "setuptools_scm[toml]>=7.1.0"]
 build-backend = "setuptools.build_meta"
 
 
-[tool.setuptools.packages.find]
-include= ["freighter*"]
-
 [tool.setuptools_scm]
 write_to = "freighter/version.py"
-version_scheme = "python-simplified-semver" #guess-next-dev, post-release, python-simplified-semver, release-branch-semver, no-guess-dev
-local_scheme = "no-local-version" #node-and-date, node-and-timestamp, dirty-tag, no-local-version
+version_scheme = "python-simplified-semver"                    #guess-next-dev, post-release, python-simplified-semver, release-branch-semver, no-guess-dev
+local_scheme = "no-local-version"                              #node-and-date, node-and-timestamp, dirty-tag, no-local-version
 git_describe_command = "git describe --tags --long --match v*"

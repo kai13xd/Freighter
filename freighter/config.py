@@ -1,12 +1,32 @@
 import tomllib
+
+from platform import system
 from dataclasses import dataclass, field
-from os import mkdir, remove
-from os.path import isdir, isfile, join, normpath
+from os import mkdir, remove, getcwd, chdir
+
+from os.path import isdir, isfile, join, normpath, expandvars
 from pathlib import Path
 from dacite import from_dict
-
-from .constants import *
+from enum import StrEnum
+from .console import *
 from .exceptions import *
+
+
+PLATFORM = system()
+
+
+class DefaultFolder(StrEnum):
+    GECKO = "gecko/"
+    SOURCE = "source/"
+    INCLUDE = "include/"
+    SYMBOLS = "symbols/"
+    BUILD = "build/"
+    TEMP = "temp/"
+
+
+FREIGHTER_LOCALAPPDATA = expandvars("%LOCALAPPDATA%/Freighter/")
+FREIGHTER_USERENVIRONMENT = FREIGHTER_LOCALAPPDATA + "UserEnvironment.toml"
+DEFAULT_PROJECT_CONFIG_NAME = "ProjectConfig.toml"
 
 if not isdir(FREIGHTER_LOCALAPPDATA):
     mkdir(FREIGHTER_LOCALAPPDATA)
@@ -19,9 +39,9 @@ def file_exists(path: str | Path, throw=False, verbose=False) -> str:
             console_print(f'{ORANGE}File Found "{path}"!')
         return normpath(path).replace("\\", "/")
     if throw:
-        raise FreighterException(f'The file "{path}{WARN_COLOR}" does not exist')
+        raise FreighterException(f'Could not find the file "{path}{WARN_COLOR}" relative to the cwd: "{getcwd()}"')
     else:
-        console_print(f'The file "{path}{WARN_COLOR}" does not exist')
+        console_print(f'Could not find the file "{path}{WARN_COLOR}" relative to the cwd: "{getcwd()}"')
     return ""
 
 
@@ -32,9 +52,9 @@ def dir_exists(path: str | Path, throw=False, verbose=False) -> str:
             console_print(f'{ORANGE}Directory Found "{path}"!')
         return join(normpath(path), "").replace("\\", "/")
     if throw:
-        raise FreighterException(f'The directory "{path}{WARN_COLOR}" does not exist')
+        raise FreighterException(f'Could not find the directory "{path}{WARN_COLOR}" relative to the cwd "{getcwd()}"')
     else:
-        console_print(f'The directory "{path}{WARN_COLOR}" does not exist')
+        console_print(f'Could not find the directory "{path}{WARN_COLOR}" relative to the cwd "{getcwd()}"')
     return ""
 
 
@@ -182,27 +202,26 @@ class UserEnvironment:
 
 @dataclass
 class Profile:
+    # Required
     ProjectName: str
     GameID: str
-    InjectionAddress: int
+    InjectionAddress:int
     InputDolFile: str
     OutputDolFile: str
     IncludeFolders: list[str]
     SourceFolders: list[str]
-
+    
     # Optional
-    DefaultProjectProfile: str = ""
+    
     SDA: int = 0
     SDA2: int = 0
-    GeckoFolder: str = "gecko/"
-    SymbolsFolder: str = ""
+    GeckoFolder: str = DefaultFolder.GECKO.value
+    SymbolsFolder: str = DefaultFolder.SYMBOLS.value
     LinkerScripts: list[str] = field(default_factory=list[str])
-    TemporaryFilesFolder: str = field(default="temp/")
+    TemporaryFilesFolder: str = DefaultFolder.TEMP.value
     InputSymbolMap: str = ""
     OutputSymbolMapPaths: list[str] = field(default_factory=list[str])
     StringHooks: dict[str, str] = field(default_factory=dict[str, str])
-    CleanUpTemporaryFiles: bool = False
-    VerboseOutput: bool = False
 
     IgnoredSourceFiles: list[str] = field(default_factory=list[str])
     IgnoredGeckoFiles: list[str] = field(default_factory=list[str])
@@ -214,6 +233,20 @@ class Profile:
     GCCArgs: list[str] = field(default_factory=list[str])
     GPPArgs: list[str] = field(default_factory=list[str])
     LDArgs: list[str] = field(default_factory=list[str])
+
+    @classmethod
+    @property
+    def default(cls):
+        return cls("GameTitle", "FREI01",0x8000000, "main.dol", "build/sys/main.dol", ["source/"], ["includes/"])
+
+    @property
+    def toml_string(self):
+        toml_string = f"[{self.__class__.__name__}.Debug]\n"
+        for attribute in self.__dataclass_fields__:
+            attribute_value = self.__getattribute__(attribute)
+            attribute_string = attribute_value if not isinstance(attribute_value, str) else f'"{attribute_value}"'
+            toml_string += f"{attribute} = {attribute_string}\n"
+        return toml_string + "\n"
 
     def verify_paths(self):
         file_exists(self.InputDolFile)
@@ -240,6 +273,28 @@ class Banner:
     Description: str
     OutputPath: str
 
+    @classmethod
+    @property
+    def default(cls):
+        return  cls("banner.png", "GameTitle", "GameTitle", "MyOrganization", "MyOrganization", "This is my game's description!", "build/files/opening.bnr")
+
+    @property
+    def toml_string(self):
+        toml_string = f"[{self.__class__.__name__}]\n"
+        for attribute in self.__dataclass_fields__:
+            attribute_value = self.__getattribute__(attribute)
+            attribute_string = attribute_value if not isinstance(attribute_value, str) else f'"{attribute_value}"'
+            toml_string += f"{attribute} = {attribute_string}\n"
+        return toml_string + "\n"
+
+
+@dataclass
+class ProjectList:
+    Name: str
+    Profile: Profile
+    ProjectFolder: str
+    CachePath: str
+
 
 class FreighterConfig:
     banner_config: Banner
@@ -253,12 +308,13 @@ class FreighterConfig:
         cls.profiles
         cls.project_toml_path = project_toml_path
         if not project_toml_path:
-            cls.project_toml_path = file_exists(DEFAULT_CONFIG_PATH, True)
+            cls.project_toml_path = file_exists(DEFAULT_PROJECT_CONFIG_NAME, True)
 
         with open(cls.project_toml_path, "rb") as f:
             tomlconfig = tomllib.load(f)
 
-        cls.banner_config = from_dict(data_class=Banner,data=tomlconfig["Banner"])
+        if Banner.__name__ in tomlconfig.keys():
+            cls.banner_config = from_dict(data_class=Banner, data=tomlconfig[Banner.__name__])
 
         for name, profile in tomlconfig["Profile"].items():
             cls.profiles[name] = from_dict(data_class=Profile, data=profile)
@@ -274,3 +330,28 @@ class FreighterConfig:
         else:
             cls.profile = cls.profiles[profile_name]
         cls.profile.verify_paths()
+
+    @classmethod
+    def generate_config(cls) -> str:
+        return Banner.default.toml_string + Profile.default.toml_string
+
+    @classmethod
+    def generate_project(cls):
+        from .cli import Arguments
+        if len(Arguments.new) == 2:
+            chdir(Arguments.new[1])
+        if isfile(DEFAULT_PROJECT_CONFIG_NAME):
+            console_print("A project already exists in the current working directory. Aborting.")
+            exit(0)
+
+        with open(DEFAULT_PROJECT_CONFIG_NAME, "w+") as f:
+            banner = Banner.default
+            config = Profile.default
+            config.ProjectName = Arguments.new[0]
+            f.write(banner.toml_string + config.toml_string)
+
+        for default_path in DefaultFolder:
+            if not isdir(default_path):
+                mkdir(default_path)
+
+

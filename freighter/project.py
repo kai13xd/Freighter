@@ -5,7 +5,7 @@ from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import cache
 from glob import glob as _glob
-from os import makedirs, remove, removedirs
+from os import makedirs
 from pathlib import Path
 from time import time
 from typing import Iterator
@@ -13,11 +13,11 @@ from typing import Iterator
 from dolreader.dol import DolFile
 from dolreader.section import DataSection, Section, TextSection
 from elftools.elf.elffile import ELFFile, SymbolTableSection
-from geckolibs.gct import GeckoCodeTable, GeckoCommand
+from geckolibs.gct import GeckoCodeTable
 from geckolibs.geckocode import AsmInsert, AsmInsertXOR
 
 from .config import *
-from .constants import *
+from .console import *
 from .exceptions import *
 from .filelist import *
 from .hooks import *
@@ -36,63 +36,8 @@ def strip_comments(line: str):
     return line.split("//")[0].strip()
 
 
-def _get_function_symbol(lines: Iterator[tuple[int, str]], is_c_linkage: bool = False) -> tuple[int, Iterator[tuple[int, str]], str]:
-    """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
-    """Also doesn't account for namespaces that arent in the function signature"""
-    while True:
-        line_number, line = next(lines)
-        line = strip_comments(line)
-        if 'extern "C"' in line:
-            is_c_linkage = True
-        if not line:
-            continue
-        elif "(" in line:
-            # line = re.sub(".*[\*>] ",'',line) # remove templates
-            while line.startswith(("*", "&")):  # throw out trailing *'s and &'s
-                line = line[:1]
-            line = re.findall("[A-Za-z0-9_:]*\(.*\)", line)[0]
-            if is_c_linkage:
-                # c symbols have no params
-                return line_number, lines, re.sub("\(.*\)", "", line)
-            if "()" in line:
-                return line_number, lines, line
-            it = iter(re.findall('(extern "C"|[A-Za-z0-9_]+|[:]+|[<>\(\),*&])', line))
-            chunks = []
-            depth = 0
-            for s in it:
-                if s in ["const", "volatile", "unsigned", "signed"]:
-                    chunks.append(s + " ")  # add space
-                    continue
-                if s.isalpha():
-                    v = next(it)
-                    if depth and v.isalpha():
-                        chunks.append(s)
-                        continue
-                    else:
-                        chunks.append(s)
-                        s = v
-                match (s):
-                    case "<":
-                        depth += 1
-                    case ">":
-                        depth -= 1
-                    case ",":
-                        chunks.pop()
-                        chunks.append(", ")
-                        continue
-                    case ")":
-                        chunks.pop()
-                chunks.append(s)
-            func = ""
-            for s in chunks:
-                func += s
-                func = func.replace("const char", "char const")  # dumb
-            return line_number, lines, func
-
-
-class Project:
+class FreighterProject:
     def __init__(self):
-        # Instance variables
         self.profile = FreighterConfig.profile  # Allows multiprocessing processes to have context
         self.bin_data: bytearray
         self.library_folders: str
@@ -105,6 +50,7 @@ class Project:
         self.hooks = list[Hook]()
         self.compile_time = 0
         self.demangler_process = None
+        self.dol = DolFile(open(self.profile.InputDolFile, "rb"))
         if not self.profile.InjectionAddress:
             self.profile.InjectionAddress = self.dol.lastSection.address + self.dol.lastSection.size
             print(f"{WHITE}Base address auto-set from end of Read-Only Memory: {INFO_COLOR}{self.profile.InjectionAddress:x}\n{WHITE}Do not rely on this feature if your DOL uses .sbss2\n")
@@ -126,61 +72,62 @@ class Project:
         self.final_object_file = ObjectFile(f"{self.profile.TemporaryFilesFolder}{self.profile.ProjectName}.o")
         FileList.add(self.final_object_file)
         self.gecko_table = GeckoCodeTable(self.profile.GameID, self.profile.ProjectName)
-        self.dol = DolFile(open(self.profile.InputDolFile, "rb"))
 
     def build(self) -> None:
         build_start_time = time()
         makedirs(self.profile.TemporaryFilesFolder, exist_ok=True)
-        self.__get_source_files()
-        self.__process_pragmas()
+        self.get_source_files()
+        self.process_pragmas()
 
         compile_list = list[SourceFile]()
         for source_file in self.source_files:
-            # populate the object_file list
-            self.object_files.append(source_file.object_file)
             if source_file.needs_recompile():
                 compile_list.append(source_file)
 
-        # Only compile if we have sourcefiles that need to be compiled
         if compile_list:
+            # Only compile if we have sourcefiles that need to be compiled
             compile_start_time = time()
-            self.__compile(compile_list)
+            self.compile(compile_list)
             self.compile_time = time() - compile_start_time
 
-            for object_file in self.object_files:
-                if object_file.is_hash_same():
-                    print(f"{object_file} is not modified!")
-                    self.symbols.update(object_file.symbols)
+            for source_file in compile_list:
+                if source_file.object_file.is_hash_same():
+                    # Update the symbol dict with the cached symbols
+                    print(f"{source_file.object_file} is not modified!")
+                    self.symbols.update(source_file.object_file.symbols)
                 else:
-                    self.__find_undefined_symbols(object_file)
+                    # Update the symbol dict for any new symbols
+                    self.find_undefined_symbols(source_file.object_file)
         else:
+            # Else update the symbol dict with the cached symbols
             for object_file in self.object_files:
                 self.symbols.update(object_file.symbols)
             self.symbols.update(self.final_object_file.symbols)
 
-        self.__load_symbol_definitions()
-        self.__generate_linkerscript()
-        self.__link()
-        self.__process_project()
-        self.__analyze_final()
-        self.__save_symbol_map()
+        self.load_symbol_definitions()
+        self.generate_linkerscript()
+        self.link()
+        self.process_project()
+        self.analyze_final()
+        self.save_symbol_map()
         self.bin_data = bytearray(open(self.profile.TemporaryFilesFolder + self.profile.ProjectName + ".bin", "rb").read())
         print(f"{ORANGE}Begin Patching...")
-        self.__apply_gecko()
-        self.__apply_hooks()
-        self.__patch_osarena_low(self.dol, self.profile.InjectionAddress + len(self.bin_data))
+        self.apply_gecko()
+        self.apply_hooks()
+        self.patch_osarena_low(self.dol, self.profile.InjectionAddress + len(self.bin_data))
         with open(self.profile.OutputDolFile, "wb") as f:
             self.dol.save(f)
-        self.__create_banner(FreighterConfig.banner_config)
+        self.create_banner()
         self.build_time = time() - build_start_time
         print(f'\n{GREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {INFO_COLOR}"{self.profile.OutputDolFile}"{GREEN}!')
-        self.__print_extras()
+        self.print_extras()
         self.final_object_file.calculate_hash()
         FileList.save_state()
 
-    def __create_banner(self, config: Banner):
-        if config:
+    def create_banner(self):
+        if FreighterConfig.banner_config:
             console_print("Generating game banner...")
+            config = FreighterConfig.banner_config
             texture = GameCubeTexture(config.BannerImage)
             banner = BNR()
             banner.banner_image.data = texture.encode(ImageFormat.RGB5A3)
@@ -192,7 +139,7 @@ class Project:
             banner.save(config.OutputPath)
             console_print(f'Banner saved to "{config.OutputPath}"')
 
-    def __print_extras(self):
+    def print_extras(self):
         with open(self.profile.OutputDolFile, "rb") as f:
             md5 = hashlib.file_digest(f, "md5").hexdigest()
             sha_256 = hashlib.file_digest(f, "sha256").hexdigest()
@@ -239,18 +186,20 @@ class Project:
             subprocess.call(args, stdout=f)
         return outpath
 
-    def __get_source_files(self):
+    def get_source_files(self):
         for folder in self.profile.SourceFolders:
             for file in glob(f"{folder}/**/**.c", recursive=True) + glob(f"{folder}/**/**.cpp", recursive=True):
                 if file in self.profile.IgnoredSourceFiles:
                     continue
-                self.source_files.append(SourceFile(file))
+                source_file = SourceFile(file)
+                self.source_files.append(source_file)
+                self.object_files.append(source_file.object_file)
 
-    def __compile(self, compile_list: list[SourceFile]):
+    def compile(self, compile_list: list[SourceFile]):
         with ProcessPoolExecutor() as executor:
             tasks = []
             for source_file in compile_list:
-                task = executor.submit(self.compile, source_file, source_file.object_file)
+                task = executor.submit(self.compile_task, source_file, source_file.object_file)
                 print(f"{COMPILING} {source_file}")
                 tasks.append(task)
 
@@ -272,7 +221,7 @@ class Project:
                     source_file_error += source_file.relative_path + "\n"
                 raise Exception(f"{WARN_COLOR}Build process halted. Please fix code errors for the following files:\n{INFO_COLOR}" + source_file_error)
 
-    def compile(self, source_file: SourceFile, output: ObjectFile) -> tuple[int, SourceFile, str, str]:
+    def compile_task(self, source_file: SourceFile, output: ObjectFile) -> tuple[int, SourceFile, str, str]:
         args = []
         if source_file.extension == ".cpp":
             args = [UserEnvironment.GPP, "-c"] + self.profile.GPPArgs
@@ -287,7 +236,7 @@ class Project:
         out, err = process.communicate()
         return process.returncode, source_file, out.decode(), err.decode()
 
-    def __find_undefined_symbols(self, object_file: ObjectFile):
+    def find_undefined_symbols(self, object_file: ObjectFile):
         nm_file = self.dump_nm(object_file.relative_path)
         print(f"{ORANGE}Analyzing NM Output -> {INFO_COLOR}{nm_file}")
         with open(nm_file, "r") as f:
@@ -328,7 +277,7 @@ class Project:
                     else:
                         symbol.source_file = object_file.source_file_name
 
-    def __load_symbol_definitions(self):
+    def load_symbol_definitions(self):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
         print(f"{ORANGE}Loading manually defined symbols...")
         for file in Path(self.profile.SymbolsFolder).glob("*.txt"):
@@ -339,7 +288,7 @@ class Project:
             for line in lines:
                 line = line.rstrip().partition("//")[0]
                 if line:
-                    (name, address) = [x.strip() for x in line.split(" = ")]
+                    name, address = line.split(" = ")
                     if name in self.symbols:
                         symbol = self.symbols[name]
                         if symbol.source_file:  # skip this symbol because we are overriding it
@@ -349,64 +298,114 @@ class Project:
                         symbol.is_absolute = True
                         symbol.section = section
 
-    def __process_pragmas(self):
-        for source_file in self.source_files:
-            if source_file in self.profile.IgnoreHooks:
-                continue
-            is_c_linkage = False
-            if source_file.extension == ".c":
-                is_c_linkage = True
-
-            with open(source_file, "r", encoding="utf8") as f:
-                lines = enumerate(f.readlines())
-
-            for line_number, line in lines:
+    def process_pragmas(self):
+        def get_function_symbol(lines: Iterator[tuple[int, str]], is_c_linkage: bool = False) -> tuple[int, Iterator[tuple[int, str]], str]:
+            """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
+            """Also doesn't account for namespaces that arent in the function signature"""
+            while True:
+                line_number, line = next(lines)
                 line = strip_comments(line)
-
-                if not line.startswith("#p"):
+                if 'extern "C"' in line:
+                    is_c_linkage = True
+                if not line:
                     continue
+                elif "(" in line:
+                    # line = re.sub(".*[\*>] ",'',line) # remove templates
+                    while line.startswith(("*", "&")):  # throw out trailing *'s and &'s
+                        line = line[:1]
+                    line = re.findall("[A-Za-z0-9_:]*\(.*\)", line)[0]
+                    if is_c_linkage:
+                        # c symbols have no params
+                        return line_number, lines, re.sub("\(.*\)", "", line)
+                    if "()" in line:
+                        return line_number, lines, line
+                    it = iter(re.findall('(extern "C"|[A-Za-z0-9_]+|[:]+|[<>\(\),*&])', line))
+                    chunks = []
+                    depth = 0
+                    for s in it:
+                        if s in ["const", "volatile", "unsigned", "signed"]:
+                            chunks.append(s + " ")  # add space
+                            continue
+                        if s.isalpha():
+                            v = next(it)
+                            if depth and v.isalpha():
+                                chunks.append(s)
+                                continue
+                            else:
+                                chunks.append(s)
+                                s = v
+                            if s == "<":
+                                depth += 1
+                            elif s == ">":
+                                depth -= 1
+                            elif s == ",":
+                                chunks.pop()
+                                chunks.append(", ")
+                                continue
+                            elif s == ")":
+                                chunks.pop()
+                        chunks.append(s)
+                    func = ""
+                    for s in chunks:
+                        func += s
+                        func = func.replace("const char", "char const")  # dumb
+                    return line_number, lines, func
+                for source_file in self.source_files:
+                    if source_file in self.profile.IgnoreHooks:
+                        continue
+                    is_c_linkage = False
+                    if source_file.extension == ".c":
+                        is_c_linkage = True
+
+                    with open(source_file, "r", encoding="utf8") as f:
+                        lines = enumerate(f.readlines())
+
+                    for line_number, line in lines:
+                        line = strip_comments(line)
+
+                        if not line.startswith("#p"):
+                            continue
 
                 line = line.removeprefix("#pragma ")
                 if line.startswith("hook"):
                     branch_type, *addresses = line.removeprefix("hook ").split(" ")
-                    line_number, lines, function_symbol = _get_function_symbol(lines, is_c_linkage)
-                    match (branch_type):
-                        case "bl":
-                            for address in addresses:
-                                self.hooks.append(BranchHook(address, function_symbol, True))
-                        case "b":
-                            for address in addresses:
-                                self.hooks.append(BranchHook(address, function_symbol))
-                        case _:
-                            raise FreighterException(f"{branch_type} is not a valid supported branch type for #pragma hook!\n" + f"{line} Found in {INFO_COLOR}{source_file}{WARN_COLOR} on line number {line_number + 1}")
+                    line_number, lines, function_symbol = get_function_symbol(lines, is_c_linkage)
+                    if branch_type == "bl":
+                        for address in addresses:
+                            self.hooks.append(BranchHook(address, function_symbol, True))
+                    elif branch_type == "b":
+                        for address in addresses:
+                            self.hooks.append(BranchHook(address, function_symbol))
+                    else:
+                        raise FreighterException(f"{branch_type} is not a valid supported branch type for #pragma hook!\n" + f"{line} Found in {INFO_COLOR}{source_file}{WARN_COLOR} on line number {line_number + 1}")
                 elif line.startswith("inject"):
                     inject_type, *addresses = line.removeprefix("inject ").split(" ")
-                    match (inject_type):
-                        case "pointer":
-                            line_number, lines, function_symbol = _get_function_symbol(lines, is_c_linkage)
-                            for address in addresses:
-                                self.hooks.append(PointerHook(address, function_symbol))
-                        case "string":
-                            for address in addresses:
-                                inject_string = ""
-                                self.hooks.append(StringHook(address, inject_string))
-                        case _:
-                            raise FreighterException(f"Arguments for {PURPLE}{line}{INFO_COLOR} are incorrect!\n" + f"{line} Found in {INFO_COLOR}{source_file}{WARN_COLOR} on line number {line_number + 1}")
 
-    def __analyze_final(self):
+                    if inject_type == "pointer":
+                        line_number, lines, function_symbol = get_function_symbol(lines, is_c_linkage)
+                        for address in addresses:
+                            self.hooks.append(PointerHook(address, function_symbol))
+                    if inject_type == "string":
+                        for address in addresses:
+                            inject_string = ""
+                            self.hooks.append(StringHook(address, inject_string))
+                    else:
+                        raise FreighterException(f"Arguments for {PURPLE}{line}{INFO_COLOR} are incorrect!\n" + f"{line} Found in {INFO_COLOR}{source_file}{WARN_COLOR} on line number {line_number + 1}")
+
+    def analyze_final(self):
         print(f"{ORANGE}Dumping objdump...{CYAN}")
         self.dump_objdump(self.final_object_file, "-tSr", "-C")
-        self.__find_undefined_symbols(self.final_object_file)
-        self.__analyze_readelf(self.dump_readelf(self.final_object_file, "-a", "--wide", "--debug-dump"))
+        self.find_undefined_symbols(self.final_object_file)
+        self.analyze_readelf(self.dump_readelf(self.final_object_file, "-a", "--wide", "--debug-dump"))
 
-    def __generate_linkerscript(self):
+    def generate_linkerscript(self):
         written_symbols = set[Symbol]()  # Keep track of duplicates
         linkerscript_file = self.profile.TemporaryFilesFolder + self.profile.ProjectName + "_linkerscript.ld"
         with open(linkerscript_file, "w") as f:
 
             def write_section(section: str):
                 symbols = [x for x in self.symbols.values() if x.section == section]
-                if symbols == []:
+                if not symbols:
                     return
                 f.write(f"\t{section} ALIGN(0x20):\n\t{{\n")
                 for symbol in symbols:
@@ -461,7 +460,7 @@ class Project:
             )
         self.profile.LinkerScripts.append(linkerscript_file)
 
-    def __link(self):
+    def link(self):
         print(f"{INFO_COLOR}Linking...{ORANGE}")
         args = [UserEnvironment.GPP]
         for arg in self.profile.LDArgs:
@@ -472,15 +471,15 @@ class Project:
             args.append("-T" + linkerscript)
         args.extend(["-Wl,-Map", f"{self.profile.TemporaryFilesFolder + self.profile.ProjectName}.map"])
         args.extend(["-o", self.final_object_file.relative_path])
-        if self.profile.VerboseOutput:
-            print(f"{PURPLE}{args}")
+
+        console_print(f"{PURPLE}{args}", PrintType.VERBOSE)
         exit_code = subprocess.call(args, stdout=subprocess.PIPE)
         if exit_code:
             raise RuntimeError(f'{ERROR} failed to link object files"\n')
         else:
             print(f"{LINKED}{PURPLE} -> {INFO_COLOR}{self.profile.TemporaryFilesFolder + self.profile.ProjectName}.o")
 
-    def __process_project(self):
+    def process_project(self):
         with open(self.final_object_file, "rb") as f:
             elf = ELFFile(f)
             with open(self.profile.TemporaryFilesFolder + self.profile.ProjectName + ".bin", "wb") as data:
@@ -492,7 +491,7 @@ class Project:
                         data.seek(symbol.header["sh_addr"] - self.profile.InjectionAddress)
                         data.write(symbol.data())
 
-    def __analyze_readelf(self, path: str):
+    def analyze_readelf(self, path: str):
         section_map = {}
         print(f"{ORANGE}Analyzing {INFO_COLOR}{path}...")
         with open(path, "r") as f:
@@ -519,7 +518,7 @@ class Project:
                         continue
                     symbol.section = section_map[int(ndx)]
 
-    def __apply_hooks(self):
+    def apply_hooks(self):
         for hook in self.hooks:
             hook.resolve(self.symbols)
             hook.apply_dol(self.dol)
@@ -548,7 +547,7 @@ class Project:
         with open(self.profile.OutputDolFile, "wb") as f:
             self.dol.save(f)
 
-    def __apply_gecko(self):
+    def apply_gecko(self):
         for gecko_txt in Path(self.profile.GeckoFolder).glob("*.txt*"):
             if gecko_txt.as_posix() in self.profile.IgnoredGeckoFiles:
                 continue
@@ -600,7 +599,7 @@ class Project:
         print("\n")
         self.gecko_table.apply(self.dol)
 
-    def __save_symbol_map(self):
+    def save_symbol_map(self):
         if not self.profile.InputSymbolMap:
             print(f"{ORANGE}No input symbol map. Skipping.")
             return
@@ -612,11 +611,10 @@ class Project:
         print(f"{INFO_COLOR}Copying symbols to map...")
         with open(self.final_object_file, "rb") as f:
             elf = ELFFile(f)
+
             index_to_name = {}
-            index = 0
-            for section in elf.iter_sections():
+            for index, section in enumerate(elf.iter_sections()):
                 index_to_name[index] = section.name
-                index += 1
 
             section_symbols = defaultdict(list)
             symtab = elf.get_section_by_name(".symtab")
@@ -673,16 +671,15 @@ class Project:
         if not self.demangler_process:
             self.demangler_process = subprocess.Popen([UserEnvironment.CPPFLIT], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
-        self.demangler_process.stdin.write(f"{string}\n".encode())
-        self.demangler_process.stdin.flush()
-
-        demangled = self.demangler_process.stdout.readline().decode().rstrip()
-        if self.profile.VerboseOutput:
-            print(f" 🧼 {INFO_COLOR}{string}{PURPLE} -> {GREEN}{demangled}")
-
+        demangled = ""
+        if self.demangler_process.stdin and self.demangler_process.stdout:
+            self.demangler_process.stdin.write(f"{string}\n".encode())
+            self.demangler_process.stdin.flush()
+            demangled = self.demangler_process.stdout.readline().decode().rstrip()
+            console_print(f" 🧼 {INFO_COLOR}{string}{PURPLE} -> {GREEN}{demangled}", PrintType.VERBOSE)
         return demangled
 
-    def __patch_osarena_low(self, dol: DolFile, rom_end: int):
+    def patch_osarena_low(self, dol: DolFile, rom_end: int):
         stack_size = 0x10000
         db_stack_size = 0x2000
 

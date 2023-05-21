@@ -1,14 +1,15 @@
 import os
 from sys import exit
-from argparse import Action, ArgumentParser, RawTextHelpFormatter, _ArgumentGroup
-from collections.abc import Iterable
+from argparse import Action, ArgumentParser, Namespace, RawTextHelpFormatter, _ArgumentGroup, ONE_OR_MORE
+from collections.abc import Callable, Iterable, Sequence
 from shutil import rmtree
+from typing import Any
 from .config import *
 
 from .ansicolor import *
 from .config import FreighterConfig, UserEnvironment
-from .constants import *
-from .devkit_tools import Project
+from .console import *
+from .project import FreighterProject
 from .doltools import *
 from .filelist import FileList, File
 from .hooks import *
@@ -57,70 +58,105 @@ class FreighterHelpFormatter(RawTextHelpFormatter):
             self.add_argument(action)
 
 
-parser = ArgumentParser(description=DESCRIPTION, epilog=EPILOG, prefix_chars="-", add_help=False, formatter_class=FreighterHelpFormatter)
+class Arguments:
+    parser = ArgumentParser(description=DESCRIPTION, epilog=EPILOG, formatter_class=FreighterHelpFormatter, prefix_chars="-")
+    build: str
+    new: list[str]
+    clean: bool
+    project: None
+    config: None
+    reset: bool
+    verbose: bool
 
-parser.add_argument("-h", "-help", action="help", help="Shows this help prompt.")
+    @classmethod
+    def parse_args(cls) -> None:
+        cls.parser.add_argument("-help", action="store_true", help="Shows the help prompt.")
 
-parser.add_argument(
-    "-build",
-    metavar="profile name",
-    const="Default",
-    nargs="?",
-    help="Builds the project with the selected profile.\nDefaults to first profile if no arguments are passed.",
-)
+        cls.parser.add_argument("-new", metavar="<Project Name> [Path]", nargs=ONE_OR_MORE, help="Generates a new project at the current working directory with the specified project name.")
 
-parser.add_argument(
-    "-project",
-    metavar="[project directory]",
-    help=f"The project directory containing a {DEFAULT_CONFIG_PATH}.\nIf this option is not passed, Freighter assumes the current working directory is the project directory",
-)
+        cls.parser.add_argument(
+            "-build",
+            metavar="profile name",
+            const="Default",
+            nargs="?",
+            help="Builds the project with the selected profile.\nDefaults to first profile if no arguments are passed.",
+        )
 
-parser.add_argument("-config", metavar="[path to TOML file]", help="Overrides the default project config path.")
+        cls.parser.add_argument(
+            "-project",
+            metavar="[project directory]",
+            help=f"The project directory containing a {DEFAULT_PROJECT_CONFIG_NAME}.\nIf this option is not passed, Freighter assumes the current working directory is the project directory",
+        )
 
-parser.add_argument("-cleanup", action="store_true", help="Removes temporary files folder after build")
+        cls.parser.add_argument("-config", metavar="[path to TOML file]", help="Overrides the default project config path.")
 
-parser.add_argument("-verbose", action="store_true", help="Print extra info to the console")
+        cls.parser.add_argument("-clean", action="store_true", help="Removes all temporary files and resets the cache. Useful if Freighter throws an error about missing symbols if the filecache becomes bad.")
 
-parser.add_argument("-reset", action="store_true", help="Reconfigures your UserEnvironment.toml")
+        cls.parser.add_argument("-verbose", action="store_true", help="Print extra info to the console")
 
-args = parser.parse_args()
+        cls.parser.add_argument("-reset", action="store_true", help="Reconfigures your UserEnvironment.toml")
+
+        args = cls.parser.parse_args()
+
+        cls.help = args.help
+        cls.new = args.new
+        cls.build = args.build
+        cls.project = args.project
+        cls.config = args.config
+        cls.clean = args.clean
+        cls.verbose = args.verbose
+        cls.reset = args.reset
+
+    @classmethod
+    def print_help(cls):
+        cls.parser.print_help()
+        exit(0)
 
 
-UserEnvironment(args.reset)
+Arguments.parse_args()
 
-try:
-    if args.project:
-        os.chdir(Path(args.project).absolute())
-except:
-    pass
 
-FileList.init()
+if Arguments.build or Arguments.project:
+    UserEnvironment(Arguments.reset)
 
-if args.config:
-    FreighterConfig(args.config)
-else:
-    FreighterConfig()
-FreighterConfig.set_project_profile(args.build)
+    try:
+        if Arguments.project:
+            os.chdir(Path(Arguments.project).absolute())
+    except:
+        pass
 
-File(FreighterConfig.project_toml_path)
+    FileList.init()
+
+    if Arguments.config:
+        FreighterConfig(Arguments.config)
+    else:
+        FreighterConfig()
+    FreighterConfig.set_project_profile(Arguments.build)
+
+    File(FreighterConfig.project_toml_path)
+
 
 def main():
-    os.system("cls" if os.name == "nt" else "clear")
-    if not sys.argv:
-        parser.print_help()
+    if Arguments.new:
+        FreighterConfig.generate_project()
+        exit(0)
 
-    if args.cleanup:
+    os.system("cls" if os.name == "nt" else "clear")
+    if not Arguments.build and not Arguments.clean:
+        Arguments.print_help()
+
+    if Arguments.clean:
         cleanup()
 
-    if args.build:
-        project = Project()
+    if Arguments.build:
+        project = FreighterProject()
         project.build()
-        if args.cleanup:
-            cleanup()
 
 
 def cleanup():
     console_print(f'{CYAN}Attempting to clean up temporary files at "{Path(FreighterConfig.profile.TemporaryFilesFolder).absolute().as_posix()}"')
-    if dir_exists(FreighterConfig.profile.TemporaryFilesFolder) and args.cleanup:
+    if dir_exists(FreighterConfig.profile.TemporaryFilesFolder):
         rmtree(FreighterConfig.profile.TemporaryFilesFolder)
-        console_print("Cleaned up.")
+        console_print("Removed temporary files.")
+    else:
+        console_print("Nothing to clean up.")

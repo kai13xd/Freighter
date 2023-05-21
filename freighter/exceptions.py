@@ -1,7 +1,5 @@
-from .constants import *
-from types import TracebackType
+from .console import *
 import sys
-import os
 
 
 class FreighterException(Exception):
