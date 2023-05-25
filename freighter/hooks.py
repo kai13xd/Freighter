@@ -1,7 +1,7 @@
-from .doltools import *
-from .console import *
-
 from dolreader.dol import DolFile
+from freighter.colors import RED, GREEN, PURPLE, ORANGE, CYAN
+from freighter.console import Console
+from freighter.doltools import *
 from geckolibs.geckocode import GeckoCommand, Write16, Write32, WriteBranch, WriteString
 
 SupportedGeckoCodetypes = [
@@ -66,7 +66,7 @@ class BranchHook(Hook):
             self.good = True
 
     def dump_info(self):
-        return f" 💉 {f'{ORANGE}[{ORANGE}BranchLink{ORANGE}]' if self.lk_bit else f'{PURPLE}[Branch]'} {HEX}{self.address:x}{f'{GREEN} ✔️ {self.symbol_name}' if self.good else f'{RED} ❌ {self.symbol_name+RED}    Address was not found!'}"
+        Console.print(f" 💉 {f'{ORANGE}[{ORANGE}BranchLink{ORANGE}]' if self.lk_bit else f'{PURPLE}[Branch]'} 0x{self.address:x}{f'{GREEN} ✔️ {self.symbol_name}' if self.good else f'{RED} ❌ {self.symbol_name+RED}    Address was not found!'}")
 
 
 class PointerHook(Hook):
@@ -90,7 +90,7 @@ class PointerHook(Hook):
             self.good = True
 
     def dump_info(self):
-        return f" 💉 {CYAN}[Pointer]    {HEX}{self.address:x}{f'{GREEN} ✔️' if self.good else f'{RED} ❌'} {self.symbol_name}"
+        return f" 💉 {CYAN}[Pointer]    0x{self.address:x}{f'{GREEN} ✔️' if self.good else f'{RED} ❌'} {self.symbol_name}"
 
 
 class StringHook(Hook):
@@ -105,7 +105,7 @@ class StringHook(Hook):
         self.data = self.string.encode(self.encoding) + b"\x00"
         if self.max_strlen != None:
             if len(self.data) > self.max_strlen:
-                print('Warning: "{:s}" exceeds {} bytes!'.format(repr(self.string)[+1:-1], self.max_strlen))
+                Console.print('Warning: "{:s}" exceeds {} bytes!'.format(repr(self.string)[+1:-1], self.max_strlen))
             else:
                 while len(self.data) < self.max_strlen:
                     self.data += b"\x00"
@@ -150,12 +150,12 @@ class FileHook(Hook):
                     self.data = f.read()[self.start : self.end]
                 if self.max_size != None:
                     if len(self.data) > self.max_size:
-                        print('Warning: "{:s}" exceeds {} bytes!'.format(repr(self.filepath)[+1:-1], self.max_size))
+                        Console.print('Warning: "{:s}" exceeds {} bytes!'.format(repr(self.filepath)[+1:-1], self.max_size))
                     else:
                         while len(self.data) < self.max_size:
                             self.data += b"\x00"
         except OSError:
-            print('Warning: "{:s}" could not be opened!'.format(repr(self.filepath)[+1:-1]))
+            Console.print('Warning: "{:s}" could not be opened!'.format(repr(self.filepath)[+1:-1]))
 
     def apply_dol(self, dol: DolFile):
         if dol.is_mapped(self.address):
@@ -213,7 +213,7 @@ class Immediate16Hook(Hook):
                     True,
                 )
             else:
-                print('Unknown modifier: "{}"'.format(self.modifier))
+                Console.print('Unknown modifier: "{}"'.format(self.modifier))
             self.data = mask_field(self.data, 16, True)
 
     def apply_dol(self, dol: DolFile):
@@ -276,7 +276,7 @@ class Immediate12Hook(Hook):
                     True,
                 )
             else:
-                print('Unknown modifier: "{}"'.format(self.modifier))
+                Console.print('Unknown modifier: "{}"'.format(self.modifier))
             self.data = mask_field(self.data, 12, True)
             self.data |= mask_field(self.i, 1, False) << 12
             self.data |= mask_field(self.w, 3, False) << 13

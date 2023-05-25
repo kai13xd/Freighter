@@ -2,7 +2,7 @@ from PIL import Image, ImageFile
 import numpy as np
 from enum import IntEnum
 from .bitcolorcache import *
-from ..console import *
+from freighter.console import Console
 from time import time
 from struct import pack
 import moderngl
@@ -95,24 +95,24 @@ void main()
 
 
 class GameCubeTexture:
-    ctx = moderngl.create_standalone_context()
-
-    prog = ctx.program(
-        vertex_shader="""
-                #version 330
-                in vec2 vertices;
-                out vec2 vert_pos;
-                void main() {
-                    vert_pos = 0.5*(vertices + 1.0);
-                    gl_Position = vec4(vertices, 0.0, 1.0);
-                }
-            """,
-        fragment_shader=FRAGMENT_SHADER,
-    )
-
-    vao = ctx.simple_vertex_array(prog, ctx.buffer(np.array([1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0]).astype("f4").tobytes()), "vertices")
-
     def __init__(self, image_path):
+        self.ctx = moderngl.create_standalone_context()
+
+        prog = self.ctx.program(
+            vertex_shader="""
+                    #version 330
+                    in vec2 vertices;
+                    out vec2 vert_pos;
+                    void main() {
+                        vert_pos = 0.5*(vertices + 1.0);
+                        gl_Position = vec4(vertices, 0.0, 1.0);
+                    }
+                """,
+            fragment_shader=FRAGMENT_SHADER,
+        )
+
+        self.vao = self.ctx.simple_vertex_array(prog, self.ctx.buffer(np.array([1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0]).astype("f4").tobytes()), "vertices")
+
         self.input_image = Image.open(image_path)
         self.buffer = np.array(self.input_image)
         self.result = np.array(self.input_image)

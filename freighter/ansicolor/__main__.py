@@ -2,7 +2,7 @@ import io
 import pstats
 import cProfile
 from pstats import SortKey
-from ansicolor import *
+from freighter.ansicolor import *
 
 ITERATIONS = 100
 TESTSTRING = "This is a test string."
@@ -10,8 +10,7 @@ TESTSTRING = "This is a test string."
 
 def test():
     for i in range(ITERATIONS):
-        print(ansi_format(TESTSTRING, AnsiTrueColor(1.0, 0.0, 0.0), AnsiBackground.NONE,
-              AnsiAttribute.UNDERLINE, AnsiAttribute.ITALIC, AnsiAttribute.BOLD))
+        print(ansi_format(TESTSTRING, AnsiTrueColor(1.0, 0.0, 0.0), AnsiBackground.NONE, AnsiAttribute.UNDERLINE, AnsiAttribute.ITALIC, AnsiAttribute.BOLD))
 
 
 if __name__ == "__main__":

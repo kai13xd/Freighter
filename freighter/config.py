@@ -1,230 +1,179 @@
 import tomllib
-
-from platform import system
 from dataclasses import dataclass, field
-from os import mkdir, remove, getcwd, chdir
-
-from os.path import isdir, isfile, join, normpath, expandvars
-from pathlib import Path
-from dacite import from_dict
-from enum import StrEnum
-from .console import *
-from .exceptions import *
-
+from os import chdir, remove
+from os.path import isdir, isfile
+from platform import system
+from typing import ClassVar
+from freighter.console import Console
+from freighter.exceptions import FreighterException
+from freighter.path import Path, DirectoryPath, FilePath
+from freighter.arguments import Arguments
+from freighter.toml import *
+from freighter.numerics import UInt
 
 PLATFORM = system()
 
+DEFAULT_FOLDERS = {
+    "GECKO": DirectoryPath("gecko/"),
+    "SOURCE": DirectoryPath("source/"),
+    "INCLUDE": DirectoryPath("include/"),
+    "SYMBOLS": DirectoryPath("symbols/"),
+    "BUILD": DirectoryPath("build/"),
+    "TEMP": DirectoryPath("temp/"),
+}
 
-class DefaultFolder(StrEnum):
-    GECKO = "gecko/"
-    SOURCE = "source/"
-    INCLUDE = "include/"
-    SYMBOLS = "symbols/"
-    BUILD = "build/"
-    TEMP = "temp/"
+FREIGHTER_LOCALAPPDATA = DirectoryPath.expandvars("%LOCALAPPDATA%/Freighter/")
+if not FREIGHTER_LOCALAPPDATA.exists():
+    FREIGHTER_LOCALAPPDATA.create()
+USERENVIRONMENT_PATH = FilePath(FREIGHTER_LOCALAPPDATA / "UserEnvironment.toml")
+DEFAULT_PROJECT_CONFIG_NAME = str("ProjectConfig.toml")
 
+EXPECTED_DEVKITPRO_PATHS = list[DirectoryPath]()
+EXPECTED_DOLPHIN_USERPATH: DirectoryPath
 
-FREIGHTER_LOCALAPPDATA = expandvars("%LOCALAPPDATA%/Freighter/")
-FREIGHTER_USERENVIRONMENT = FREIGHTER_LOCALAPPDATA + "UserEnvironment.toml"
-DEFAULT_PROJECT_CONFIG_NAME = "ProjectConfig.toml"
-
-if not isdir(FREIGHTER_LOCALAPPDATA):
-    mkdir(FREIGHTER_LOCALAPPDATA)
-
-
-def file_exists(path: str | Path, throw=False, verbose=False) -> str:
-    path = Path(path).as_posix()
-    if isfile(path):
-        if verbose:
-            console_print(f'{ORANGE}File Found "{path}"!')
-        return normpath(path).replace("\\", "/")
-    if throw:
-        raise FreighterException(f'Could not find the file "{path}{WARN_COLOR}" relative to the cwd: "{getcwd()}"')
-    else:
-        console_print(f'Could not find the file "{path}{WARN_COLOR}" relative to the cwd: "{getcwd()}"')
-    return ""
-
-
-def dir_exists(path: str | Path, throw=False, verbose=False) -> str:
-    path = Path(path).as_posix()
-    if isdir(path):
-        if verbose:
-            console_print(f'{ORANGE}Directory Found "{path}"!')
-        return join(normpath(path), "").replace("\\", "/")
-    if throw:
-        raise FreighterException(f'Could not find the directory "{path}{WARN_COLOR}" relative to the cwd "{getcwd()}"')
-    else:
-        console_print(f'Could not find the directory "{path}{WARN_COLOR}" relative to the cwd "{getcwd()}"')
-    return ""
+if PLATFORM == "Windows":
+    DRIVES = ["C:", "D:", "E:", "F:", "G:", "H:", "I:", "J:", "K:", "L:", "M:", "N:", "O:", "P:", "Q:", "R:", "S:", "T:", "U:", "V:", "W:", "X:", "Y:", "Z:"]
+    for drive in DRIVES:
+        EXPECTED_DEVKITPRO_PATHS.append(DirectoryPath(f"{drive}/devkitPro/"))
+    EXPECTED_DOLPHIN_USERPATH = Path.home / "Documents/Dolphin Emulator"
+elif PLATFORM == "Linux":
+    EXPECTED_DEVKITPRO_PATHS.append(DirectoryPath("/opt/devkitpro/devkitPPC/bin/"))
+    EXPECTED_DOLPHIN_USERPATH = DirectoryPath(Path.home / ".local/share/dolphin-emu/")
+else:
+    raise FreighterException(f"Configuring Freighter for your system platform ({PLATFORM}) is not supported.")
 
 
-class UserEnvironment:
-    DevKitProPath = ""
-    GPP = ""
-    GCC = ""
-    LD = ""
-    AR = ""
-    OBJDUMP = ""
-    OBJCOPY = ""
-    NM = ""
-    READELF = ""
-    GBD = ""
-    CPPFLIT = ""
-    DolphinUserPath = ""
-    DolphinMaps = ""
+@dataclass(init=False)
+class UserEnvironment(TOMLConfig):
+    DevKitProPath: DirectoryPath
+    GPP: FilePath
+    GCC: FilePath
+    LD: FilePath
+    AR: FilePath
+    OBJDUMP: FilePath
+    OBJCOPY: FilePath
+    NM: FilePath
+    READELF: FilePath
+    GBD: FilePath
+    CPPFLIT: FilePath
+    DolphinUserPath: DirectoryPath
+    DolphinMaps: DirectoryPath
 
-    def __new__(cls, reset: bool = False) -> None:
-        if reset:
-            print("Resetting UserEnvironment...")
-            if isfile(FREIGHTER_USERENVIRONMENT):
-                remove(FREIGHTER_USERENVIRONMENT)
-
-        if not file_exists(FREIGHTER_USERENVIRONMENT):
-            cls.find_dekitppc_bin_folder()
-            cls.verify_devkitpro()
-            print("devKitPro path good.")
-            cls.find_dolphin_documents_folder()
-            cls.verify_dolphin()
-            print("Dolphin User path good.")
-            cls.write_toml()
+    def __init__(self) -> None:
+        if not USERENVIRONMENT_PATH.exists():
+            self.find_dekitppc_bin_folder()
+            self.verify_devkitpro()
+            Console.print("devKitPro path good.")
+            self.find_dolphin_documents_folder()
+            self.verify_dolphin()
+            Console.print("Dolphin User path good.")
+            self.save(USERENVIRONMENT_PATH)
         else:
-            with open(FREIGHTER_USERENVIRONMENT, "rb") as f:
-                for key, value in tomllib.load(f).items():
-                    setattr(cls, key, value)
-            cls.verify_devkitpro()
-            cls.verify_dolphin()
-
-        if reset:
-            print("Finished")
-            print(f"Saved to {FREIGHTER_USERENVIRONMENT}")
-            exit(0)
+            self.load(USERENVIRONMENT_PATH)
 
     @classmethod
-    def set_binutils(cls, devkitpro_path: str):
-        cls.DevKitProPath = devkitpro_path
-        cls.GPP = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-g++.exe"
-        cls.GCC = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-gcc.exe"
-        cls.LD = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-ld.exe"
-        cls.AR = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-ar.exe"
-        cls.OBJDUMP = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-objdump.exe"
-        cls.OBJCOPY = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-objcopy.exe"
-        cls.NM = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-gcc-nm.exe"
-        cls.READELF = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-readelf.exe"
-        cls.GBD = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-gdb.exe"
-        cls.CPPFLIT = cls.DevKitProPath + "devkitPPC/bin/powerpc-eabi-c++filt.exe"
+    def reset(cls):
+        Console.print("Resetting UserEnvironment...")
+        if isfile(USERENVIRONMENT_PATH):
+            remove(USERENVIRONMENT_PATH)
+        user_environment = UserEnvironment()
 
-    @classmethod
-    def find_dekitppc_bin_folder(cls) -> None:
-        print("Finding devKitPro folder...")
-        expected_path = ""
-        if PLATFORM == "Windows":
-            expected_path = "C:/devkitPro/"
-            cls.DevKitProPath = dir_exists(expected_path)
-            if not cls.DevKitProPath:
-                drives = ["D:", "E:", "F:", "G:", "H:", "I:", "J:", "K:", "L:", "M:", "N:", "O:", "P:", "Q:", "R:", "S:", "T:", "U:", "V:", "W:", "X:", "Y:", "Z:"]
-                path = ""
-                for drive in drives:
-                    path = f"{drive}/devkitPro/"
-                    if dir_exists(path):
-                        cls.set_binutils(path)
-                        return
-        elif PLATFORM == "Linux":
-            expected_path = f"/opt/devkitpro/devkitPPC/bin/"
-            cls.set_binutils(expected_path)
+        Console.print("Finished")
+        user_environment.save(USERENVIRONMENT_PATH)
+        exit(0)
+
+    def set_binutils(self, devkitpro_path: DirectoryPath):
+        self.DevKitProPath = devkitpro_path
+        self.GPP = FilePath(devkitpro_path / "devkitPPC/bin/powerpc-eabi-g++.exe")
+        self.GCC = FilePath(devkitpro_path / "devkitPPC/bin/powerpc-eabi-gcc.exe")
+        self.LD = FilePath(devkitpro_path / "devkitPPC/bin/powerpc-eabi-ld.exe")
+        self.AR = FilePath(devkitpro_path / "devkitPPC/bin/powerpc-eabi-ar.exe")
+        self.OBJDUMP = FilePath(devkitpro_path / "devkitPPC/bin/powerpc-eabi-objdump.exe")
+        self.OBJCOPY = FilePath(devkitpro_path / "devkitPPC/bin/powerpc-eabi-objcopy.exe")
+        self.NM = FilePath(devkitpro_path / "devkitPPC/bin/powerpc-eabi-gcc-nm.exe")
+        self.READELF = FilePath(devkitpro_path / "devkitPPC/bin/powerpc-eabi-readelf.exe")
+        self.GBD = FilePath(devkitpro_path / "devkitPPC/bin/powerpc-eabi-gdb.exe")
+        self.CPPFLIT = FilePath(devkitpro_path / "devkitPPC/bin/powerpc-eabi-c++filt.exe")
+
+    def find_dekitppc_bin_folder(self) -> None:
+        Console.print("Finding devKitPro folder...")
+        for path in EXPECTED_DEVKITPRO_PATHS:
+            if path.exists():
+                self.DevKitProPath = path
+                self.set_binutils(path)
+                return
+        path = input(f"Freighter could not find your devkitPro folder. Expected to be found at {EXPECTED_DEVKITPRO_PATHS[0]}.\n Input the path to set it:")
+        self.set_binutils(DirectoryPath(path))
+
+        while not self.verify_devkitpro():
+            path = input(f"Try again:")
+            self.set_binutils(DirectoryPath(path))
+
+    def set_dolphin_paths(self, dolphin_user_path: DirectoryPath):
+        self.DolphinUserPath = dolphin_user_path
+        self.DolphinMaps = self.DolphinUserPath / "Maps"
+
+    def find_dolphin_documents_folder(self) -> None:
+        Console.print("Finding Dolphin user folder...")
+        if EXPECTED_DOLPHIN_USERPATH.exists():
+            self.set_dolphin_paths(EXPECTED_DOLPHIN_USERPATH)
             return
+        path = input(f"Freighter could not find your Dolphin User folder. Expected to be found at {EXPECTED_DOLPHIN_USERPATH}.\n Input the path to set it:") + "/"
+        self.set_dolphin_paths(DirectoryPath(path))
+        while not self.verify_dolphin():
+            path = input("Try again:")
+            self.set_dolphin_paths(DirectoryPath(path))
 
-        cls.set_binutils(input(f"Freighter could not find your devkitPro folder. Expected to be found at {expected_path}.\n Input the path to set it:") + "/")
-        while not cls.verify_devkitpro():
-            cls.set_binutils(input(f"Try again:") + "/")
-
-    @classmethod
-    def set_dolphin_paths(cls, dolphin_user_path: str):
-        cls.DolphinUserPath = dolphin_user_path
-        cls.DolphinMaps = cls.DolphinUserPath + "Maps/"
-
-    @classmethod
-    def find_dolphin_documents_folder(cls) -> None:
-        print("Finding Dolphin user folder...")
-        expected_path = ""
-        if PLATFORM == "Windows":
-            expected_path = str(Path.home().as_posix()) + "/Documents/Dolphin Emulator/"
-            cls.set_dolphin_paths(dir_exists(expected_path))
-            return
-        elif PLATFORM == "Linux":
-            expected_path = "/.local/share/dolphin-emu/"
-            cls.set_dolphin_paths(str(Path.home().as_posix()) + expected_path)
-            return
-        cls.set_dolphin_paths(input(f"Freighter could not find your Dolphin User folder. Expected to be found at {expected_path}.\n Input the path to set it:") + "/")
-        while not cls.verify_dolphin():
-            cls.set_dolphin_paths(input("Try again:") + "/")
-
-    @classmethod
-    def verify_devkitpro(cls) -> bool:
-        if not dir_exists(cls.DevKitProPath):
-            return False
+    def verify_devkitpro(self) -> bool:
         # If these fail then something got deleted or moved from the bin folder
         try:
-            file_exists(cls.GPP, True)
-            file_exists(cls.GCC, True)
-            file_exists(cls.LD, True)
-            file_exists(cls.AR, True)
-            file_exists(cls.OBJDUMP, True)
-            file_exists(cls.OBJCOPY, True)
-            file_exists(cls.NM, True)
-            file_exists(cls.READELF, True)
-            file_exists(cls.GBD, True)
-            file_exists(cls.CPPFLIT, True)
-
+            self.GPP.assert_exists()
+            self.GCC.assert_exists()
+            self.LD.assert_exists()
+            self.AR.assert_exists()
+            self.OBJDUMP.assert_exists()
+            self.OBJCOPY.assert_exists()
+            self.NM.assert_exists()
+            self.READELF.assert_exists()
+            self.GBD.assert_exists()
+            self.CPPFLIT.assert_exists()
         except:
-            print("This doesn't seem right. All or some binutils executables were not not found.")
+            Console.print("This doesn't seem right. All or some binutils executables were not not found.")
             return False
         return True
 
-    @classmethod
-    def verify_dolphin(cls) -> bool:
-        if not dir_exists(cls.DolphinUserPath):
-            return False
+    def verify_dolphin(self) -> bool:
         try:
-            dir_exists(cls.DolphinMaps, True)
-
+            self.DolphinMaps.assert_exists()
         except:
-            print("This doesn't seem right. Maps folder was not found.")
+            Console.print("This doesn't seem right. Maps folder was not found.")
             return False
         return True
-
-    @classmethod
-    def write_toml(cls) -> None:
-        cls_vars = {key: value for key, value in cls.__dict__.items() if not key.startswith("__") and not isinstance(value, classmethod)}
-        with open(FREIGHTER_USERENVIRONMENT, "w+") as f:
-            for key, value in cls_vars.items():
-                f.write(f'{key} = "{value}"\n')
 
 
 @dataclass
-class Profile:
+class Profile(TOMLObject):
     # Required
-    ProjectName: str
     GameID: str
-    InjectionAddress:int
-    InputDolFile: str
-    OutputDolFile: str
-    IncludeFolders: list[str]
-    SourceFolders: list[str]
-    
+    InjectionAddress: UInt
+    InputDolFile: FilePath
+    OutputDolFile: FilePath
+    IncludeFolders: list[DirectoryPath]
+    SourceFolders: list[DirectoryPath]
+
     # Optional
-    
-    SDA: int = 0
-    SDA2: int = 0
-    GeckoFolder: str = DefaultFolder.GECKO.value
-    SymbolsFolder: str = DefaultFolder.SYMBOLS.value
-    LinkerScripts: list[str] = field(default_factory=list[str])
-    TemporaryFilesFolder: str = DefaultFolder.TEMP.value
-    InputSymbolMap: str = ""
-    OutputSymbolMapPaths: list[str] = field(default_factory=list[str])
+    SDA: UInt = field(default_factory=UInt)
+    SDA2: UInt = field(default_factory=UInt)
+    GeckoFolder: DirectoryPath = DEFAULT_FOLDERS["GECKO"]
+    SymbolsFolder: DirectoryPath = DEFAULT_FOLDERS["SYMBOLS"]
+    LinkerScripts: list[FilePath] = field(default_factory=list[FilePath])
+    TemporaryFilesFolder: DirectoryPath = DEFAULT_FOLDERS["TEMP"]
+    InputSymbolMap: FilePath = field(default=FilePath(""))
+    OutputSymbolMapPaths: list[FilePath] = field(default_factory=list[FilePath])
     StringHooks: dict[str, str] = field(default_factory=dict[str, str])
 
-    IgnoredSourceFiles: list[str] = field(default_factory=list[str])
-    IgnoredGeckoFiles: list[str] = field(default_factory=list[str])
+    IgnoredSourceFiles: list[FilePath] = field(default_factory=list[FilePath])
+    IgnoredGeckoFiles: list[FilePath] = field(default_factory=list[FilePath])
     IgnoreHooks: list[str] = field(default_factory=list[str])
     DiscardLibraryObjects: list[str] = field(default_factory=list[str])
     DiscardSections: list[str] = field(default_factory=list[str])
@@ -237,121 +186,101 @@ class Profile:
     @classmethod
     @property
     def default(cls):
-        return cls("GameTitle", "FREI01",0x8000000, "main.dol", "build/sys/main.dol", ["source/"], ["includes/"])
-
-    @property
-    def toml_string(self):
-        toml_string = f"[{self.__class__.__name__}.Debug]\n"
-        for attribute in self.__dataclass_fields__:
-            attribute_value = self.__getattribute__(attribute)
-            attribute_string = attribute_value if not isinstance(attribute_value, str) else f'"{attribute_value}"'
-            toml_string += f"{attribute} = {attribute_string}\n"
-        return toml_string + "\n"
+        return cls("FREI01", UInt(), FilePath("main.dol"), FilePath("build/sys/main.dol"), [DirectoryPath("source/")], [DirectoryPath("includes/")])
 
     def verify_paths(self):
-        file_exists(self.InputDolFile)
-        file_exists(self.InputSymbolMap)
+        self.InputDolFile.assert_exists()
+        self.InputSymbolMap.assert_exists()
         for folder in self.IncludeFolders:
-            dir_exists(folder)
+            folder.assert_exists()
         for folder in self.SourceFolders:
-            dir_exists(folder)
-        dir_exists(self.GeckoFolder)
-
-        if self.SymbolsFolder:
-            dir_exists(self.SymbolsFolder)
-        for file in self.LinkerScripts:
-            file_exists(file)
+            folder.assert_exists()
 
 
 @dataclass
-class Banner:
-    BannerImage: str
-    Title: str
-    GameName: str
-    Maker: str
-    ShortMaker: str
-    Description: str
-    OutputPath: str
+class Banner(TOMLObject):
+    BannerImage: str = "banner.png"
+    Title: str = "GameTitle"
+    GameName: str = "GameTitle"
+    Maker: str = "MyOrganization"
+    ShortMaker: str = "MyOrganization"
+    Description: str = "This is my game's description!"
+    OutputPath: str = "build/files/opening.bnr"
 
-    @classmethod
-    @property
-    def default(cls):
-        return  cls("banner.png", "GameTitle", "GameTitle", "MyOrganization", "MyOrganization", "This is my game's description!", "build/files/opening.bnr")
 
-    @property
-    def toml_string(self):
-        toml_string = f"[{self.__class__.__name__}]\n"
-        for attribute in self.__dataclass_fields__:
-            attribute_value = self.__getattribute__(attribute)
-            attribute_string = attribute_value if not isinstance(attribute_value, str) else f'"{attribute_value}"'
-            toml_string += f"{attribute} = {attribute_string}\n"
-        return toml_string + "\n"
+PROJECTLIST_PATH = FilePath(FREIGHTER_LOCALAPPDATA / "ProjectList.toml")
+
+
+# TOML config for storing project paths so you can build projects without having to set the cwd
+@dataclass
+class Project(TOMLObject):  # This should serialize to [Project.WhateverProjectName]
+    ProjectPath: DirectoryPath
+    ConfigPath: FilePath
 
 
 @dataclass
-class ProjectList:
-    Name: str
-    Profile: Profile
-    ProjectFolder: str
-    CachePath: str
+class ProjectListConfig(TOMLConfig):
+    Projects: dict[str, Project]
 
+    def __init__(self):
+        self.Projects = {}
+        if PROJECTLIST_PATH.exists():
+            self.load(PROJECTLIST_PATH)
 
-class FreighterConfig:
-    banner_config: Banner
-    default_project: Profile
-    profile: Profile
-    profiles = dict[str, Profile]()
-    project_toml_path: str
+    def add_project(self, project_path: DirectoryPath):
+        if not project_path:
+            return
 
-    @classmethod
-    def __init__(cls, project_toml_path: str = ""):
-        cls.profiles
-        cls.project_toml_path = project_toml_path
-        if not project_toml_path:
-            cls.project_toml_path = file_exists(DEFAULT_PROJECT_CONFIG_NAME, True)
+        config_path = project_path.create_filepath("ProjectConfig.toml")
+        project_config = ProjectConfig()
+        project_config.load(config_path)
 
-        with open(cls.project_toml_path, "rb") as f:
-            tomlconfig = tomllib.load(f)
+        self.Projects[project_config.ProjectName] = Project(project_path, config_path)
+        self.save(PROJECTLIST_PATH)
 
-        if Banner.__name__ in tomlconfig.keys():
-            cls.banner_config = from_dict(data_class=Banner, data=tomlconfig[Banner.__name__])
+    def new_project(self, args: Arguments.NewArg):
+        if not args:
+            return
+        project_path = args.project_path.absolute()
+        chdir(project_path)
 
-        for name, profile in tomlconfig["Profile"].items():
-            cls.profiles[name] = from_dict(data_class=Profile, data=profile)
-
-        # Set the default profile as the first entry in the TOML
-        cls.default_project = next(iter(cls.profiles.values()))
-        cls.profile = cls.default_project
-
-    @classmethod
-    def set_project_profile(cls, profile_name: str) -> None:
-        if profile_name == "Default" or profile_name == None:
-            cls.profile = cls.default_project
-        else:
-            cls.profile = cls.profiles[profile_name]
-        cls.profile.verify_paths()
-
-    @classmethod
-    def generate_config(cls) -> str:
-        return Banner.default.toml_string + Profile.default.toml_string
-
-    @classmethod
-    def generate_project(cls):
-        from .cli import Arguments
-        if len(Arguments.new) == 2:
-            chdir(Arguments.new[1])
         if isfile(DEFAULT_PROJECT_CONFIG_NAME):
-            console_print("A project already exists in the current working directory. Aborting.")
+            Console.print("A project already exists in the current working directory. Aborting.")
             exit(0)
+        banner = Banner()
+        config = Profile.default
+
+        for default_path in DEFAULT_FOLDERS.values():
+            default_path.create()
+
+        config_path = project_path.create_filepath(DEFAULT_PROJECT_CONFIG_NAME)
+
+        self.Projects[args.project_name] = Project(project_path, config_path)
 
         with open(DEFAULT_PROJECT_CONFIG_NAME, "w+") as f:
-            banner = Banner.default
-            config = Profile.default
-            config.ProjectName = Arguments.new[0]
             f.write(banner.toml_string + config.toml_string)
-
-        for default_path in DefaultFolder:
-            if not isdir(default_path):
-                mkdir(default_path)
+        self.save(PROJECTLIST_PATH)
 
 
+@dataclass
+class ProjectConfig(TOMLConfig):
+    config_path: ClassVar[FilePath]
+    selected_profile: ClassVar[Profile]
+    ProjectName: str = ""
+    BannerConfig: Banner = field(default_factory=Banner)
+    Profiles: dict[str, Profile] = field(default_factory=dict[str, Profile])
+
+    def init(self, config_path: FilePath, profile_name: str):
+        ProjectConfig.config_path = config_path
+        self.load(ProjectConfig.config_path)
+
+        if profile_name:
+            ProjectConfig.selected_profile = self.Profiles[profile_name]
+        else:
+            ProjectConfig.selected_profile = next(iter(self.Profiles.values()))
+            ProjectConfig.selected_profile.verify_paths()
+
+    @classmethod
+    @property
+    def default_toml_string(cls) -> str:
+        return Banner().toml_string + Profile.default.toml_string

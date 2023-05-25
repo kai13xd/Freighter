@@ -1,1 +1,1 @@
-from .cli import main
+from freighter.main import main

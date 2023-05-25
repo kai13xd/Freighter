@@ -28,19 +28,14 @@ After installation open your cli of choice and enter `freighter`
 ## Options
 
 ```
--h : show this help message and exit
-
---help : show this help message and exit
-
 -help : Shows the help prompt.
 
 -new <Project Name> [Path]: Generates a new project at the current working directory with the specified project name.
 
--build profile name: Builds the project with the selected profile.
-Defaults to first profile if no arguments are passed.
+-build <Project Name> [Profile]: Builds the project with the selected profile.
+Defaults to first profile in the config if no arguments are passed.
 
--project [project directory]: The project directory containing a ProjectConfig.toml.
-If this option is not passed, Freighter assumes the current working directory is the project directory
+-add <Project Path>: Adds a project containing a ProjectConfig.toml to Freighter's project list.
 
 -config [path to TOML file]: Overrides the default project config path.
 
@@ -69,20 +64,19 @@ ShortMaker = "MyOrganization"
 Description = "This is my game's description!"
 OutputPath = "build/files/opening.bnr"
 
-[Profile.Debug]
-ProjectName = "GameTitle"
+[Profile]
 GameID = "FREI01"
-InjectionAddress = 134217728
+InjectionAddress = 0x0
 InputDolFile = "main.dol"
 OutputDolFile = "build/sys/main.dol"
-IncludeFolders = ['source/']
-SourceFolders = ['includes/']
-SDA = 0
-SDA2 = 0
-GeckoFolder = "gecko/"
-SymbolsFolder = "symbols/"
+IncludeFolders = ["source"]
+SourceFolders = ["includes"]
+SDA = 0x0
+SDA2 = 0x0
+GeckoFolder = "gecko"
+SymbolsFolder = "symbols"
 LinkerScripts = []
-TemporaryFilesFolder = "temp/"
+TemporaryFilesFolder = "temp"
 InputSymbolMap = ""
 OutputSymbolMapPaths = []
 StringHooks = {}

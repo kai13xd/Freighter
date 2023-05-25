@@ -4,9 +4,7 @@ import subprocess
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import cache
-from glob import glob as _glob
 from os import makedirs
-from pathlib import Path
 from time import time
 from typing import Iterator
 
@@ -16,20 +14,14 @@ from elftools.elf.elffile import ELFFile, SymbolTableSection
 from geckolibs.gct import GeckoCodeTable
 from geckolibs.geckocode import AsmInsert, AsmInsertXOR
 
-from .config import *
-from .console import *
-from .exceptions import *
-from .filelist import *
-from .hooks import *
-from .fileformats import *
-
-
-def glob(query: str, recursive: bool = False):
-    globbed = _glob(query, recursive=recursive)
-    result = list[str]()
-    for path in globbed:
-        result.append(path.replace("\\", "/"))
-    return result
+from freighter.config import *
+from freighter.colors import *
+from freighter.console import Console, Compiling, Success, Error, Linked
+from freighter.exceptions import *
+from freighter.fileformats import *
+from freighter.filelist import *
+from freighter.hooks import *
+from freighter.filelist import *
 
 
 def strip_comments(line: str):
@@ -37,8 +29,14 @@ def strip_comments(line: str):
 
 
 class FreighterProject:
-    def __init__(self):
-        self.profile = FreighterConfig.profile  # Allows multiprocessing processes to have context
+    def __init__(self, user_environment: UserEnvironment, project_config: ProjectConfig):
+        self.project_name = project_config.ProjectName
+        self.user_environment = user_environment
+        FileList(project_config)
+        self.profile = project_config.selected_profile  # Allows multiprocessing processes to have context
+        self.banner_config = project_config.BannerConfig
+        self.compiler_args = project_config.selected_profile.CompilerArgs
+        self.ld_args = project_config.selected_profile.LDArgs
         self.bin_data: bytearray
         self.library_folders: str
         self.symbols = defaultdict(Symbol)
@@ -50,32 +48,35 @@ class FreighterProject:
         self.hooks = list[Hook]()
         self.compile_time = 0
         self.demangler_process = None
+
         self.dol = DolFile(open(self.profile.InputDolFile, "rb"))
-        if not self.profile.InjectionAddress:
-            self.profile.InjectionAddress = self.dol.lastSection.address + self.dol.lastSection.size
-            print(f"{WHITE}Base address auto-set from end of Read-Only Memory: {INFO_COLOR}{self.profile.InjectionAddress:x}\n{WHITE}Do not rely on this feature if your DOL uses .sbss2\n")
+        # if not self.profile.InjectionAddress:
+        # self.profile.InjectionAddress = self.dol.lastSection.address + self.dol.lastSection.size
+        # Console.print(f"{WHITE}Base address auto-set from end of Read-Only Memory: {Cyan}{self.profile.InjectionAddress:x}\n{WHITE}Do not rely on this if your DOL uses .sbss2\n")
 
         if self.profile.InjectionAddress % 32:
-            print("Warning! DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
+            Console.print("Warning! DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
+
         if self.profile.SDA and self.profile.SDA2:
-            self.profile.CompilerArgs += ["-msdata=sysv"]
-            self.profile.LDArgs += [
+            self.compiler_args += ["-msdata=sysv"]
+            self.ld_args += [
                 f"--defsym=_SDA_BASE_={hex(self.profile.SDA)}",
                 f"--defsym=_SDA2_BASE_={hex(self.profile.SDA2)}",
             ]
+
         if self.profile.InputSymbolMap:
-            self.profile.OutputSymbolMapPaths.append(f"{UserEnvironment.DolphinMaps}{self.profile.GameID}.map")
+            self.profile.OutputSymbolMapPaths.append(self.user_environment.DolphinMaps.create_filepath(self.profile.GameID + ".map"))
         if self.profile.StringHooks:
             for address, string in self.profile.StringHooks.items():
                 self.hooks.append(StringHook(address, string))
-
-        self.final_object_file = ObjectFile(f"{self.profile.TemporaryFilesFolder}{self.profile.ProjectName}.o")
-        FileList.add(self.final_object_file)
-        self.gecko_table = GeckoCodeTable(self.profile.GameID, self.profile.ProjectName)
+        filepath = self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".o")
+        self.final_object_file = ObjectFile(filepath)
+        self.gecko_table = GeckoCodeTable(self.profile.GameID, self.project_name)
 
     def build(self) -> None:
         build_start_time = time()
-        makedirs(self.profile.TemporaryFilesFolder, exist_ok=True)
+        if not self.profile.TemporaryFilesFolder.exists():
+            self.profile.TemporaryFilesFolder.create()
         self.get_source_files()
         self.process_pragmas()
 
@@ -93,7 +94,7 @@ class FreighterProject:
             for source_file in compile_list:
                 if source_file.object_file.is_hash_same():
                     # Update the symbol dict with the cached symbols
-                    print(f"{source_file.object_file} is not modified!")
+                    Console.print(f"{source_file.object_file} is not modified!")
                     self.symbols.update(source_file.object_file.symbols)
                 else:
                     # Update the symbol dict for any new symbols
@@ -107,44 +108,56 @@ class FreighterProject:
         self.load_symbol_definitions()
         self.generate_linkerscript()
         self.link()
+        self.bin_path = self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".bin")
         self.process_project()
+        self.bin_data = bytearray(open(self.bin_path, "rb").read())
         self.analyze_final()
         self.save_symbol_map()
-        self.bin_data = bytearray(open(self.profile.TemporaryFilesFolder + self.profile.ProjectName + ".bin", "rb").read())
-        print(f"{ORANGE}Begin Patching...")
+
+        Console.print(f"{ORANGE}Begin Patching...")
         self.apply_gecko()
         self.apply_hooks()
         self.patch_osarena_low(self.dol, self.profile.InjectionAddress + len(self.bin_data))
         with open(self.profile.OutputDolFile, "wb") as f:
             self.dol.save(f)
+
         self.create_banner()
+
         self.build_time = time() - build_start_time
-        print(f'\n{GREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {INFO_COLOR}"{self.profile.OutputDolFile}"{GREEN}!')
+        Console.print(f'\n{GREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {CYAN}"{self.profile.OutputDolFile}"{GREEN}!')
         self.print_extras()
         self.final_object_file.calculate_hash()
         FileList.save_state()
 
-    def create_banner(self):
-        if FreighterConfig.banner_config:
-            console_print("Generating game banner...")
-            config = FreighterConfig.banner_config
-            texture = GameCubeTexture(config.BannerImage)
+    def cleanup(self):
+        Console.print(f'{CYAN}Attempting to clean up temporary files at "{self.profile.TemporaryFilesFolder}"')
+        if self.profile.TemporaryFilesFolder.exists():
+            self.profile.TemporaryFilesFolder.rmtree()
+            Console.print("Removed temporary files.")
+        else:
+            Console.print("Nothing to clean up.")
+
+    def create_banner(self) -> None:
+        if self.banner_config:
+            Console.print("Generating game banner...")
+
+            texture = GameCubeTexture(self.banner_config.BannerImage)
             banner = BNR()
             banner.banner_image.data = texture.encode(ImageFormat.RGB5A3)
-            banner.description.data = config.Description
-            banner.title.data = config.Title
-            banner.gamename.data = config.GameName
-            banner.maker.data = config.Maker
-            banner.short_maker.data = config.ShortMaker
-            banner.save(config.OutputPath)
-            console_print(f'Banner saved to "{config.OutputPath}"')
+            banner.description.data = self.banner_config.Description
+            banner.title.data = self.banner_config.Title
+            banner.gamename.data = self.banner_config.GameName
+            banner.maker.data = self.banner_config.Maker
+            banner.short_maker.data = self.banner_config.ShortMaker
+            banner.save(self.banner_config.OutputPath)
+            Console.print(f'Banner saved to "{self.banner_config.OutputPath}"')
 
-    def print_extras(self):
+    def print_extras(self) -> None:
         with open(self.profile.OutputDolFile, "rb") as f:
             md5 = hashlib.file_digest(f, "md5").hexdigest()
             sha_256 = hashlib.file_digest(f, "sha256").hexdigest()
             sha_512 = hashlib.file_digest(f, "sha512").hexdigest()
-            print(f"{GREEN}MD5: {INFO_COLOR}{md5}\n{GREEN}SHA-256: {INFO_COLOR}{sha_256}\n{GREEN}SHA-512: {INFO_COLOR}{sha_512}")
+            Console.print(f"{GREEN}MD5: {CYAN}{md5}\n{GREEN}SHA-256: {CYAN}{sha_256}\n{GREEN}SHA-512: {CYAN}{sha_512}")
 
         symbols = list[Symbol]()
         for symbol in self.symbols.values():
@@ -152,93 +165,89 @@ class FreighterProject:
         symbols = list(set(symbols))
         symbols.sort(key=lambda x: x.size, reverse=True)
         symbols = symbols[:10]
-        print(f"\nTop biggest symbols:")
+        Console.print(f"\nTop biggest symbols:")
         for symbol in symbols:
-            print(f'{GREEN}{symbol}{INFO_COLOR} in "{ORANGE}{symbol.source_file}{INFO_COLOR}" {PURPLE}{symbol.size}{GREEN} bytes')
+            Console.print(f'{GREEN}{symbol}{CYAN} in "{ORANGE}{symbol.source_file}{CYAN}" {PURPLE}{symbol.size}{GREEN} bytes')
 
-        print(f"\n{INFO_COLOR}Compilation Time: {PURPLE}{self.compile_time:.2f} {INFO_COLOR}seconds")
-        print(f"{INFO_COLOR}Build Time {PURPLE}{self.build_time:.2f} {INFO_COLOR}seconds")
+        Console.print(f"\n{CYAN}Compilation Time: {PURPLE}{self.compile_time:.2f} {CYAN}seconds")
+        Console.print(f"{CYAN}Build Time {PURPLE}{self.build_time:.2f} {CYAN}seconds")
 
-    def dump_objdump(self, objectfile_path: ObjectFile, *args: str, outpath: str = "") -> str:
+    def dump_objdump(self, object_path: ObjectFile, *args: str | Path) -> FilePath:
         """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
-        args = (UserEnvironment.OBJDUMP, objectfile_path.relative_path) + args
-        if not outpath:
-            outpath = self.profile.TemporaryFilesFolder + objectfile_path.relative_path.split("/")[-1] + ".s"
+        args = (self.user_environment.OBJDUMP, object_path) + args
+        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".s")
+
         with open(outpath, "w") as f:
             subprocess.call(args, stdout=f)
         return outpath
 
-    def dump_nm(self, object_path: str, *args: str, outpath: str = "") -> str:
+    def dump_nm(self, object_path: FilePath, *args: str | Path) -> FilePath:
         """Dumps the output from DevKitPPC's powerpc-eabi-nm.exe to a .txt file"""
-        args = (UserEnvironment.NM, object_path) + args
-        if not outpath:
-            outpath = self.profile.TemporaryFilesFolder + object_path.split("/")[-1].rstrip(".o") + ".nm"
+        args = (self.user_environment.NM, object_path) + args
+        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".o.nm")
         with open(outpath, "w") as f:
             subprocess.call(args, stdout=f)
         return outpath
 
-    def dump_readelf(self, object_path: ObjectFile, *args: str, outpath: str = "") -> str:
+    def dump_readelf(self, object_path: ObjectFile, *args: str | Path) -> FilePath:
         """Dumps the output from DevKitPPC's powerpc-eabi-readelf.exe to a .txt file"""
-        args = (UserEnvironment.READELF, object_path.relative_path) + args
-        if not outpath:
-            outpath = self.profile.TemporaryFilesFolder + object_path.relative_path.split("/")[-1] + ".readelf"
+        args = (self.user_environment.READELF, object_path) + args
+
+        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + "o.readelf")
         with open(outpath, "w") as f:
             subprocess.call(args, stdout=f)
         return outpath
 
-    def get_source_files(self):
+    def get_source_files(self) -> None:
         for folder in self.profile.SourceFolders:
-            for file in glob(f"{folder}/**/**.c", recursive=True) + glob(f"{folder}/**/**.cpp", recursive=True):
+            for file in folder.find_files(".c", ".cpp", recursive=True):
                 if file in self.profile.IgnoredSourceFiles:
                     continue
                 source_file = SourceFile(file)
                 self.source_files.append(source_file)
                 self.object_files.append(source_file.object_file)
 
-    def compile(self, compile_list: list[SourceFile]):
+    def compile(self, compile_list: list[SourceFile]) -> None:
+        failed_compilations = list[SourceFile]()
         with ProcessPoolExecutor() as executor:
             tasks = []
             for source_file in compile_list:
+                Console.print(f"{Compiling} {source_file}")
                 task = executor.submit(self.compile_task, source_file, source_file.object_file)
-                print(f"{COMPILING} {source_file}")
                 tasks.append(task)
-
-            halt_compilation = False
-            uncompiled_sources = []
-            for task in as_completed(tasks):
-                exitcode, source_file, out, err = task.result()
+            for result in as_completed(tasks):
+                exitcode, source_file, out, err = result.result()
                 if exitcode:
-                    halt_compilation = True
-                    uncompiled_sources.append(source_file)
-                    print(f'\n{ERROR} failed to compile:{INFO_COLOR}\n{err}")')
+                    failed_compilations.append(source_file)
+                    Console.print(f'\n{Error} failed to compile:{CYAN}\n{err}")')
                 else:
-                    print(f'{SUCCESS} "{source_file}"{INFO_COLOR}{out}')
-                    source_file.is_dirty = True
+                    Console.print(f'{Success} "{source_file}"{CYAN}{out}')
+                    source_file.object_file.is_dirty = True
 
-            if halt_compilation:
-                source_file_error = ""
-                for source_file in uncompiled_sources:
-                    source_file_error += source_file.relative_path + "\n"
-                raise Exception(f"{WARN_COLOR}Build process halted. Please fix code errors for the following files:\n{INFO_COLOR}" + source_file_error)
+        if failed_compilations:
+            source_file_error = ""
+            for source_file in failed_compilations:
+                source_file_error += str(source_file) + "\n"
+            raise Exception(f"{ORANGE}Build process halted. Please fix code errors for the following files:\n{CYAN}" + source_file_error)
 
     def compile_task(self, source_file: SourceFile, output: ObjectFile) -> tuple[int, SourceFile, str, str]:
         args = []
-        if source_file.extension == ".cpp":
-            args = [UserEnvironment.GPP, "-c"] + self.profile.GPPArgs
+        if source_file.filepath.suffix == ".cpp":
+            args = [self.user_environment.GPP, "-c"] + self.profile.GPPArgs
         else:
-            args = [UserEnvironment.GCC, "-c"] + self.profile.GCCArgs
-        args += self.profile.CompilerArgs
+            args = [self.user_environment.GCC, "-c"] + self.profile.GCCArgs
+        args += self.compiler_args
         for path in self.profile.IncludeFolders:
-            args.append("-I" + path)
-        args.extend([source_file.relative_path, "-o", output.relative_path, "-fdiagnostics-color=always"])
+            args.append("-I" + str(path))
+        args.extend([source_file, "-o", output, "-fdiagnostics-color=always"])
 
         process = subprocess.Popen(args, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = process.communicate()
         return process.returncode, source_file, out.decode(), err.decode()
 
     def find_undefined_symbols(self, object_file: ObjectFile):
-        nm_file = self.dump_nm(object_file.relative_path)
-        print(f"{ORANGE}Analyzing NM Output -> {INFO_COLOR}{nm_file}")
+        nm_file = self.dump_nm(object_file)
+        Console.print(f"{ORANGE}Analyzing NM Output -> {CYAN}{nm_file}")
         with open(nm_file, "r") as f:
             for line in f:
                 type, symbol_name = line[8:].strip().split(" ")
@@ -272,15 +281,15 @@ class FreighterProject:
                     symbol.is_absolute = True
                 symbol.is_undefined = False
                 if not symbol.source_file:
-                    if object_file.source_file_name == self.profile.ProjectName:
+                    if object_file.source_file_name == self.project_name:
                         symbol.source_file = ""  # Temporary workaround for symbols sourced from external libs
                     else:
                         symbol.source_file = object_file.source_file_name
 
     def load_symbol_definitions(self):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
-        print(f"{ORANGE}Loading manually defined symbols...")
-        for file in Path(self.profile.SymbolsFolder).glob("*.txt"):
+        Console.print(f"{ORANGE}Loading manually defined symbols...")
+        for file in self.profile.SymbolsFolder.find_files("*.txt"):
             with open(file.as_posix(), "r") as f:
                 lines = f.readlines()
 
@@ -366,41 +375,41 @@ class FreighterProject:
                         if not line.startswith("#p"):
                             continue
 
-                line = line.removeprefix("#pragma ")
-                if line.startswith("hook"):
-                    branch_type, *addresses = line.removeprefix("hook ").split(" ")
-                    line_number, lines, function_symbol = get_function_symbol(lines, is_c_linkage)
-                    if branch_type == "bl":
-                        for address in addresses:
-                            self.hooks.append(BranchHook(address, function_symbol, True))
-                    elif branch_type == "b":
-                        for address in addresses:
-                            self.hooks.append(BranchHook(address, function_symbol))
-                    else:
-                        raise FreighterException(f"{branch_type} is not a valid supported branch type for #pragma hook!\n" + f"{line} Found in {INFO_COLOR}{source_file}{WARN_COLOR} on line number {line_number + 1}")
-                elif line.startswith("inject"):
-                    inject_type, *addresses = line.removeprefix("inject ").split(" ")
-
-                    if inject_type == "pointer":
+                    line = line.removeprefix("#pragma ")
+                    if line.startswith("hook"):
+                        branch_type, *addresses = line.removeprefix("hook ").split(" ")
                         line_number, lines, function_symbol = get_function_symbol(lines, is_c_linkage)
-                        for address in addresses:
-                            self.hooks.append(PointerHook(address, function_symbol))
-                    if inject_type == "string":
-                        for address in addresses:
-                            inject_string = ""
-                            self.hooks.append(StringHook(address, inject_string))
-                    else:
-                        raise FreighterException(f"Arguments for {PURPLE}{line}{INFO_COLOR} are incorrect!\n" + f"{line} Found in {INFO_COLOR}{source_file}{WARN_COLOR} on line number {line_number + 1}")
+                        if branch_type == "bl":
+                            for address in addresses:
+                                self.hooks.append(BranchHook(address, function_symbol, True))
+                        elif branch_type == "b":
+                            for address in addresses:
+                                self.hooks.append(BranchHook(address, function_symbol))
+                        else:
+                            raise FreighterException(f"{branch_type} is not a valid supported branch type for #pragma hook!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
+                    elif line.startswith("inject"):
+                        inject_type, *addresses = line.removeprefix("inject ").split(" ")
+
+                        if inject_type == "pointer":
+                            line_number, lines, function_symbol = get_function_symbol(lines, is_c_linkage)
+                            for address in addresses:
+                                self.hooks.append(PointerHook(address, function_symbol))
+                        if inject_type == "string":
+                            for address in addresses:
+                                inject_string = ""
+                                self.hooks.append(StringHook(address, inject_string))
+                        else:
+                            raise FreighterException(f"Arguments for {PURPLE}{line}{CYAN} are incorrect!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
 
     def analyze_final(self):
-        print(f"{ORANGE}Dumping objdump...{CYAN}")
+        Console.print(f"{ORANGE}Dumping objdump...{CYAN}")
         self.dump_objdump(self.final_object_file, "-tSr", "-C")
         self.find_undefined_symbols(self.final_object_file)
         self.analyze_readelf(self.dump_readelf(self.final_object_file, "-a", "--wide", "--debug-dump"))
 
     def generate_linkerscript(self):
         written_symbols = set[Symbol]()  # Keep track of duplicates
-        linkerscript_file = self.profile.TemporaryFilesFolder + self.profile.ProjectName + "_linkerscript.ld"
+        linkerscript_file = self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".ld")
         with open(linkerscript_file, "w") as f:
 
             def write_section(section: str):
@@ -461,28 +470,28 @@ class FreighterProject:
         self.profile.LinkerScripts.append(linkerscript_file)
 
     def link(self):
-        print(f"{INFO_COLOR}Linking...{ORANGE}")
-        args = [UserEnvironment.GPP]
-        for arg in self.profile.LDArgs:
-            args.append("-Wl," + arg)
+        Console.print(f"{CYAN}Linking...{ORANGE}")
+        args: list[str | Path] = [self.user_environment.GPP]
+        for arg in self.ld_args:
+            args.append("-Wl," + str(arg))
         for file in self.object_files:
-            args.append(file.relative_path)
+            args.append(file.filepath)
         for linkerscript in self.profile.LinkerScripts:
-            args.append("-T" + linkerscript)
-        args.extend(["-Wl,-Map", f"{self.profile.TemporaryFilesFolder + self.profile.ProjectName}.map"])
-        args.extend(["-o", self.final_object_file.relative_path])
+            args.append("-T" + str(linkerscript))
+        args.extend(["-Wl,-Map", self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".map")])
+        args.extend(["-o", self.final_object_file.filepath])
 
-        console_print(f"{PURPLE}{args}", PrintType.VERBOSE)
+        Console.print(f"{PURPLE}{args}", PrintType.VERBOSE)
         exit_code = subprocess.call(args, stdout=subprocess.PIPE)
         if exit_code:
-            raise RuntimeError(f'{ERROR} failed to link object files"\n')
+            raise RuntimeError(f'{Error} failed to link object files"\n')
         else:
-            print(f"{LINKED}{PURPLE} -> {INFO_COLOR}{self.profile.TemporaryFilesFolder + self.profile.ProjectName}.o")
+            Console.print(f"{Linked}{PURPLE} -> {CYAN}{self.final_object_file}")
 
     def process_project(self):
         with open(self.final_object_file, "rb") as f:
             elf = ELFFile(f)
-            with open(self.profile.TemporaryFilesFolder + self.profile.ProjectName + ".bin", "wb") as data:
+            with open(self.bin_path, "wb") as data:
                 for symbol in elf.iter_sections():
                     if symbol.header["sh_addr"] < self.profile.InjectionAddress:
                         continue
@@ -491,9 +500,9 @@ class FreighterProject:
                         data.seek(symbol.header["sh_addr"] - self.profile.InjectionAddress)
                         data.write(symbol.data())
 
-    def analyze_readelf(self, path: str):
+    def analyze_readelf(self, path: FilePath):
         section_map = {}
-        print(f"{ORANGE}Analyzing {INFO_COLOR}{path}...")
+        Console.print(f"{ORANGE}Analyzing {CYAN}{path}...")
         with open(path, "r") as f:
             while "  [ 0]" not in f.readline():
                 pass
@@ -513,7 +522,7 @@ class FreighterProject:
                     symbol.hex_address = "0x" + address
                     symbol.address = int(address, 16)
                     symbol.size = int(size)
-                    symbol.library_file = self.profile.ProjectName + ".o"
+                    symbol.library_file = self.project_name + ".o"
                     if ndx == "ABS":
                         continue
                     symbol.section = section_map[int(ndx)]
@@ -522,7 +531,7 @@ class FreighterProject:
         for hook in self.hooks:
             hook.resolve(self.symbols)
             hook.apply_dol(self.dol)
-            print(hook.dump_info())
+            Console.print(hook.dump_info())
         bad_symbols = list[str]()
         for hook in self.hooks:
             if not hook.good and hook.symbol_name not in bad_symbols:
@@ -530,9 +539,9 @@ class FreighterProject:
         if bad_symbols:
             badlist = "\n"
             for name in bad_symbols:
-                badlist += f'{ORANGE}{name}{WHITE} found in {INFO_COLOR}"{self.symbols[name].source_file}"\n'
+                badlist += f'{ORANGE}{name}{AnsiAttribute.RESET} found in {CYAN}"{self.symbols[name].source_file}"\n'
             raise FreighterException(
-                f'{ERROR} Freighter could not resolve hook addresses for the given symbols:\n{badlist}\n{WHITE}Possible Reasons:{WARN_COLOR}\n• The cache Freighter uses for incremental builds is faulty and needs to be reset. Use -cleanup option to remove the cache.\n• If this is a C++ Symbol there may be a symbol definition missing from the {{INFO_COLOR}}"symbols"{{WARN_COLOR}} folder'
+                f'{Error} Freighter could not resolve hook addresses for the given symbols:\n{badlist}\n{AnsiAttribute.RESET}Possible Reasons:{ORANGE}\n• The cache Freighter uses for incremental builds is faulty and needs to be reset. Use -cleanup option to remove the cache.\n• If this is a C++ Symbol there may be a symbol definition missing from the {{Cyan}}"symbols"{{Orange}} folder'
             )
         if len(self.bin_data) > 0:
             new_section: Section
@@ -548,26 +557,26 @@ class FreighterProject:
             self.dol.save(f)
 
     def apply_gecko(self):
-        for gecko_txt in Path(self.profile.GeckoFolder).glob("*.txt*"):
+        for gecko_txt in self.profile.GeckoFolder.find_files(".txt"):
             if gecko_txt.as_posix() in self.profile.IgnoredGeckoFiles:
                 continue
             for child in GeckoCodeTable.from_text(open(gecko_txt, "r").read()):
                 self.gecko_table.add_child(child)
         while (len(self.bin_data) % 4) != 0:
             self.bin_data += b"\x00"
-        print(f"\n{GREEN}[{GREEN}Gecko Codes{GREEN}]")
+        Console.print(f"\n{GREEN}[{GREEN}Gecko Codes{GREEN}]")
         for gecko_code in self.gecko_table:
-            status = f"{GREEN}ENABLED {INFO_COLOR}" if gecko_code.is_enabled() else f"{WARN_COLOR}DISABLED{ORANGE}"
+            status = f"{GREEN}ENABLED {CYAN}" if gecko_code.is_enabled() else f"{ORANGE}DISABLED{ORANGE}"
             if gecko_code.is_enabled() == True:
                 for gecko_command in gecko_code:
                     if gecko_command.codetype not in SupportedGeckoCodetypes:
                         status = "OMITTED"
-            print("{:12s} ${}".format(status, gecko_code.name))
+            Console.print("{:12s} ${}".format(status, gecko_code.name))
             if status == "OMITTED":
-                print(f"{WARN_COLOR}Includes unsupported codetypes:")
+                Console.print(f"{ORANGE}Includes unsupported codetypes:")
                 for gecko_command in gecko_code:
                     if gecko_command.codetype not in SupportedGeckoCodetypes:
-                        print(gecko_command)
+                        Console.print(gecko_command)
             vaddress = self.profile.InjectionAddress + len(self.bin_data)
             gecko_data = bytearray()
             gecko_meta = []
@@ -596,19 +605,19 @@ class FreighterProject:
             self.bin_data += gecko_data
             if gecko_meta:
                 self.gecko_meta.append((vaddress, len(gecko_data), status, gecko_code, gecko_meta))
-        print("\n")
+        Console.print("\n")
         self.gecko_table.apply(self.dol)
 
     def save_symbol_map(self):
         if not self.profile.InputSymbolMap:
-            print(f"{ORANGE}No input symbol map. Skipping.")
+            Console.print(f"{ORANGE}No input symbol map. Skipping.")
             return
 
         if not self.profile.OutputSymbolMapPaths:
-            print(f"{ORANGE}No paths found for symbol map output. Skipping.")
+            Console.print(f"{ORANGE}No paths found for symbol map output. Skipping.")
             return
 
-        print(f"{INFO_COLOR}Copying symbols to map...")
+        Console.print(f"{CYAN}Copying symbols to map...")
         with open(self.final_object_file, "rb") as f:
             elf = ELFFile(f)
 
@@ -638,11 +647,11 @@ class FreighterProject:
                         continue
                     symbol_data["section"] = index_to_name[symbol.entry["st_shndx"]]
                     # if self.config.VerboseOutput:
-                    #     print(
-                    #         f'{GREEN + symbol_data["name"]} {PURPLE}@ {hex(symbol_data["address"])} {INFO_COLOR}({index_to_name[symbol_data["section_index"]]}) {GREEN}Size: {str(symbol_data["size"])} bytes {ORANGE +symbol_data["bind"]}, {symbol_data["type"]}',
+                    #     Console.print(
+                    #         f'{GREEN + symbol_data["name"]} {PURPLE}@ {hex(symbol_data["address"])} {Cyan}({index_to_name[symbol_data["section_index"]]}) {GREEN}Size: {str(symbol_data["size"])} bytes {Orange +symbol_data["bind"]}, {symbol_data["type"]}',
                     #         end=" ",
                     #     )
-                    #     print(f"{GREEN}Added")
+                    #     Console.print(f"{GREEN}Added")
                     section_symbols[symbol_data["section"]].append(symbol_data)
             with open(self.profile.InputSymbolMap, "r+") as f:
                 contents = f.readlines()
@@ -669,14 +678,14 @@ class FreighterProject:
     @cache
     def demangle(self, string: str) -> str:
         if not self.demangler_process:
-            self.demangler_process = subprocess.Popen([UserEnvironment.CPPFLIT], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            self.demangler_process = subprocess.Popen([self.user_environment.CPPFLIT], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
         demangled = ""
         if self.demangler_process.stdin and self.demangler_process.stdout:
             self.demangler_process.stdin.write(f"{string}\n".encode())
             self.demangler_process.stdin.flush()
             demangled = self.demangler_process.stdout.readline().decode().rstrip()
-            console_print(f" 🧼 {INFO_COLOR}{string}{PURPLE} -> {GREEN}{demangled}", PrintType.VERBOSE)
+            Console.print(f" 🧼 {CYAN}{string}{PURPLE} -> {GREEN}{demangled}", PrintType.VERBOSE)
         return demangled
 
     def patch_osarena_low(self, dol: DolFile, rom_end: int):
@@ -728,11 +737,11 @@ class FreighterProject:
         write_ori(dol, 0, 3, stack_end & 0xFFFF)
 
         size = rom_end - self.profile.InjectionAddress
-        print(
-            f"{INFO_COLOR}✨What's new:\n{INFO_COLOR}Injected Binary Size: {HEX}{ORANGE}{size:x}{GREEN} Bytes or"
-            f" {ORANGE}~{size/1024:.2f}{GREEN} KiBs\n{INFO_COLOR}Injection Address @"
-            f" {HEX}{self.profile.InjectionAddress:x}\n{INFO_COLOR}New ROM End @ {HEX}{rom_end:x}\n{INFO_COLOR}Stack"
-            f" Moved To: {HEX}{stack_addr:x}\n{INFO_COLOR}Stack End @ {HEX}{stack_end:x}\n{INFO_COLOR}New OSArenaLo @"
-            f" {HEX}{osarena_lo:x}\n{INFO_COLOR}Debug Stack Moved To: {HEX}{db_stack_addr:x}\n{INFO_COLOR}Debug Stack"
-            f" End @ {HEX}{db_stack_end:x}\n{INFO_COLOR}New Debug OSArenaLo @ {HEX}{db_osarena_lo:x}"
+        Console.print(
+            f"{CYAN}✨What's new:\n{CYAN}Injected Binary Size: 0x{ORANGE}{size:x}{GREEN} Bytes or"
+            f" {ORANGE}~{size/1024:.2f}{GREEN} KiBs\n{CYAN}Injection Address @"
+            f" 0x{self.profile.InjectionAddress:x}\n{CYAN}New ROM End @ 0x{rom_end:x}\n{CYAN}Stack"
+            f" Moved To: 0x{stack_addr:x}\n{CYAN}Stack End @ 0x{stack_end:x}\n{CYAN}New OSArenaLo @"
+            f" 0x{osarena_lo:x}\n{CYAN}Debug Stack Moved To: 0x{db_stack_addr:x}\n{CYAN}Debug Stack"
+            f" End @ 0x{db_stack_end:x}\n{CYAN}New Debug OSArenaLo @ 0x{db_osarena_lo:x}"
         )

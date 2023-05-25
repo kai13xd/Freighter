@@ -1,20 +1,11 @@
-import sys
-from typing import overload
-
-from enum import StrEnum
-from functools import cache
 from dataclasses import dataclass, field
+from enum import StrEnum
+from functools import cached_property
+from typing import overload
 
 
 @dataclass
 class Color:
-    _red: float = field(init=False, repr=False)
-    _green: float = field(init=False, repr=False)
-    _blue: float = field(init=False, repr=False)
-    _hue: float = field(init=False, repr=False)
-    _saturation: float = field(init=False, repr=False)
-    _luminance: float = field(init=False, repr=False)
-
     @overload
     def __init__(self, red: int, green: int, blue: int) -> None:
         ...
@@ -24,12 +15,10 @@ class Color:
         ...
 
     def __init__(self, red: int | float, green: int | float, blue: int | float) -> None:
-        if isinstance(red, int):
-            self._red = max(0, min(1, float(red / 255)))
-        if isinstance(green, int):
-            self._green = max(0, min(1, float(green / 255)))
-        if isinstance(blue, int):
-            self._blue = max(0, min(1, float(blue / 255)))
+        """This assumes you are using 8-bit color in the range 0-255 or float in range 0.0-1.0"""
+        self._red = red / 255
+        self._green = green / 255
+        self._blue = blue / 255
         self._recalculate_hsl()
 
     @property
@@ -38,11 +27,10 @@ class Color:
 
     @red.setter
     def red(self, red: int | float):
-        if isinstance(red, float):
-            self._red = max(0, min(1, red))
+        if isinstance(red, int):
+            self._red = red / 255
         else:
-            red = max(255, min(0, red))
-            self._red = float(red / 255)
+            self._red = red
         self._recalculate_hsl()
 
     @property
@@ -51,11 +39,10 @@ class Color:
 
     @green.setter
     def green(self, green: int | float):
-        if isinstance(green, float):
-            self._green = max(0, min(1, green))
+        if isinstance(green, int):
+            self._green = green / 255
         else:
-            red = max(255, min(0, green))
-            self._green = float(red / 255)
+            self._green = green
         self._recalculate_hsl()
 
     @property
@@ -65,10 +52,9 @@ class Color:
     @blue.setter
     def blue(self, blue: int | float):
         if isinstance(blue, float):
-            self._blue = max(0, min(1, blue))
+            self._blue = blue
         else:
-            blue = max(255, min(0, blue))
-            self._blue = float(blue / 255)
+            self._blue = blue / 255
         self._recalculate_hsl()
 
     @property
@@ -77,7 +63,7 @@ class Color:
 
     @hue.setter
     def hue(self, hue: float) -> None:
-        self.hue = max(0, min(1, hue))
+        self._hue = hue
         self._recalculate_color()
 
     @property
@@ -86,7 +72,7 @@ class Color:
 
     @saturation.setter
     def saturation(self, saturation: float) -> None:
-        self.saturation = max(0, min(1, saturation))
+        self.saturation = saturation
         self._recalculate_color()
 
     @property
@@ -95,7 +81,7 @@ class Color:
 
     @luminance.setter
     def luminance(self, luminance: float) -> None:
-        self._luminance = max(0, min(1, luminance))
+        self._luminance = luminance
         self._recalculate_color()
 
     @property
@@ -103,29 +89,32 @@ class Color:
         return f"#{int(self._red * 255):02x}{int(self._green * 255):02x}{int(self._blue * 255):02x}"
 
     @property
-    def rgb(self):
+    def hsl(self) -> tuple[float, float, float]:
+        return self._hue, self._saturation, self._luminance
+
+    @property
+    def rgb(self) -> tuple[int, int, int]:
         return int(self._red * 255), int(self._green * 255), int(self._blue * 255)
 
     def _recalculate_hsl(self) -> None:
-        max_value = max(self._red, self._green, self._blue)
         min_value = min(self._red, self._green, self._blue)
-        delta = max_value - min_value
+        max_value = max(self._red, self._green, self._blue)
 
-        # calculate hue
-        if delta == 0:
-            self._hue = 0
-        elif max_value == self._red:
-            self._hue = ((self._green - self._blue) / delta) % 6
-        elif max_value == self._green:
-            self._hue = (self._blue - self._red) / delta + 2
+        self._luminance = (max_value + min_value) / 2
+
+        delta = max_value - min_value
+        if delta == 0.0:
+            self._hue = 0.0
+        elif self._red == max_value:
+            self._hue = (self._green - self._blue) / delta
+        elif self._green == max_value:
+            self._hue = (self._blue - self._red) / delta + 2.0
         else:
-            self._hue = (self._red - self._green) / delta + 4
+            self._hue = (self._red - self._green) / delta + 4.0
         self._hue *= 60
 
-        # calculate lightness and saturation
-        self._luminance = (max_value + min_value) / 2
         if delta == 0:
-            self._saturation = 0
+            self._saturation = 0.0
         else:
             self._saturation = delta / (1 - abs(2 * self._luminance - 1))
 
@@ -147,7 +136,7 @@ class Color:
         else:
             r, g, b = c, 0, x
 
-        self._red, self._green, self._blue = (r + m), (g + m), (b + m)
+        self._red, self._green, self._blue = ((r + m), (g + m), (b + m))
 
 
 class AnsiAttribute(StrEnum):
@@ -187,29 +176,26 @@ class AnsiBrightColor(StrEnum):
 
 @dataclass
 class AnsiTrueColor(Color):
-    ansi_code: str
-
-    @overload
-    def __init__(self, red: int, green: int, blue: int, is_background: bool = False) -> None:
-        ...
-
-    @overload
-    def __init__(self, red: float, green: float, blue: float, is_background: bool = False) -> None:
-        ...
-
-    def __init__(self, red: int | float, green: int | float, blue: int | float, is_background: bool = False) -> None:
+    def __init__(self, red: int | float, green: int | float, blue: int | float) -> None:
         super().__init__(red, green, blue)
+
+    # @property
+    @cached_property
+    def color(self):
         r, g, b = self.rgb
-        if is_background:
-            self.ansi_code = f"\x1b[48;2;{r};{g};{b}m"
-        else:
-            self.ansi_code = f"\x1b[38;2;{r};{g};{b}m"
+        return f"\x1b[38;2;{r};{g};{b}m"
+
+    # @property
+    @cached_property
+    def background(self):
+        r, g, b = self.rgb
+        return f"\x1b[48;2;{r};{g};{b}m"
 
     def __str__(self):
-        return self.ansi_code
+        return self.color
 
     def __repr__(self):
-        return f"AnsiTrueColor({self.ansi_code})"
+        return f"AnsiTrueColor({super().__repr__()})"
 
 
 class AnsiBackground(StrEnum):

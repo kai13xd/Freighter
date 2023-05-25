@@ -1,5 +1,5 @@
-from freighter.cli import Arguments
-from freighter.config import FreighterConfig
+from freighter.arguments import Arguments
+from freighter.config import ProjectConfig
 
 options = ""
 for name, option in Arguments.parser._option_string_actions.items():
@@ -48,7 +48,7 @@ You can generate a new project by using `freighter new ProjectName`
 ## ProjectConfig.toml
 
 ```toml
-{FreighterConfig.generate_config()}
+{ProjectConfig.default_toml_string}
 ```
 
 # Credits

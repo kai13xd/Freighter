@@ -1,15 +1,13 @@
-from .cli import main
-
-from functools import wraps
-import numpy as np
+from freighter.main import main
 import time
-
-from .fileformats import GameCubeTexture, ImageFormat
-
-iterations = 1
+from functools import wraps
+from freighter.fileformats import GameCubeTexture, ImageFormat
 
 
-def timeit(func, iterations: int = iterations):
+iterations = 10000
+
+
+def timeit(func):
     iters = range(iterations)
 
     @wraps(func)
@@ -23,17 +21,17 @@ def timeit(func, iterations: int = iterations):
 
     return timeit_wrapper
 
-
 @timeit
 def test1():
     texture = GameCubeTexture("test.png")
     texture.gpu_encode_test()
 
 
-if __name__ is "__main__":
-    # import cProfile
-    # pr = cProfile.Profile()
-    # pr.enable()
+if __name__ == "__main__":
+    import cProfile
+
+    pr = cProfile.Profile()
+    pr.enable()
     main()
-    # pr.disable()
-    # pr.print_stats(sort='time')
+    pr.disable()
+    pr.print_stats(sort="cumtime")
