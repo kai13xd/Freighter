@@ -118,7 +118,7 @@ class DirectoryPath(Path):
     def delete(self, ask_confirm: bool = False):
         if not self.exists():
             return
-        if ask_confirm and input(f'Confirm deletion of directory "{self}"?\nType "yes" to confirm:\n') == "yes":
+        if not ask_confirm or input(f'Confirm deletion of directory "{self}"?\nType "yes" to confirm:\n') == "yes":
             rmtree(self)
         
 
@@ -169,7 +169,7 @@ class FilePath(Path):
     def delete(self, ask_confirm: bool = False):
         if not self.exists():
             return
-        if ask_confirm and input(f'Confirm deletion of file "{self}"?\nType "yes" to confirm:\n') == "yes":
+        if not ask_confirm or input(f'Confirm deletion of file "{self}"?\nType "yes" to confirm:\n') == "yes":
             remove(self)
         
 

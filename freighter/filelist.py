@@ -186,6 +186,7 @@ class FileList:
     filelist = dict[str, File]()
     include_folders: list[DirectoryPath]
     temp_folder: DirectoryPath
+    filehash_path: FilePath
     @classmethod
     def __init__(cls, project_config: ProjectConfig):
         cls.filehash_path = FilePath(f"{FREIGHTER_LOCALAPPDATA}/{project_config.ProjectName}_FileList.json")

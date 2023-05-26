@@ -8,7 +8,7 @@ Freighter is command-line based toolkit for setting up and building C/C++ projec
 
 # Installation
 
-> ### Ensure you are using the latest version of `Python 3.11 or greater` -> https://www.python.org/downloads/)
+> ### Ensure you are using the latest version of `Python 3.11 or greater` -> https://www.python.org/downloads/
 
 This package is made available through PyPi:
 

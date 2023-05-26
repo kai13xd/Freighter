@@ -131,6 +131,7 @@ class FreighterProject:
 
     def cleanup(self):
         Console.print(f'{CYAN}Cleaning up temporary files at "{self.profile.TemporaryFilesFolder}"')
+        FileList.filehash_path.delete()
         self.profile.TemporaryFilesFolder.delete()
         Console.print("Removed temporary files.")
 
