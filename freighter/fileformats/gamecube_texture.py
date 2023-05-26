@@ -5,7 +5,7 @@ from .bitcolorcache import *
 from freighter.console import Console
 from time import time
 from struct import pack
-import moderngl
+# import moderngl
 
 
 class ImageFormat(IntEnum):
@@ -96,22 +96,22 @@ void main()
 
 class GameCubeTexture:
     def __init__(self, image_path):
-        self.ctx = moderngl.create_standalone_context()
+        # self.ctx = moderngl.create_standalone_context()
 
-        prog = self.ctx.program(
-            vertex_shader="""
-                    #version 330
-                    in vec2 vertices;
-                    out vec2 vert_pos;
-                    void main() {
-                        vert_pos = 0.5*(vertices + 1.0);
-                        gl_Position = vec4(vertices, 0.0, 1.0);
-                    }
-                """,
-            fragment_shader=FRAGMENT_SHADER,
-        )
+        # prog = self.ctx.program(
+        #     vertex_shader="""
+        #             #version 330
+        #             in vec2 vertices;
+        #             out vec2 vert_pos;
+        #             void main() {
+        #                 vert_pos = 0.5*(vertices + 1.0);
+        #                 gl_Position = vec4(vertices, 0.0, 1.0);
+        #             }
+        #         """,
+        #     fragment_shader=FRAGMENT_SHADER,
+        # )
 
-        self.vao = self.ctx.simple_vertex_array(prog, self.ctx.buffer(np.array([1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0]).astype("f4").tobytes()), "vertices")
+        # self.vao = self.ctx.simple_vertex_array(prog, self.ctx.buffer(np.array([1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0]).astype("f4").tobytes()), "vertices")
 
         self.input_image = Image.open(image_path)
         self.buffer = np.array(self.input_image)
@@ -127,15 +127,15 @@ class GameCubeTexture:
     def get_image_blockview(self, np_array: np.ndarray, blocksize):
         return [np_array[x : x + blocksize, y : y + blocksize] for x in range(0, np_array.shape[0], blocksize) for y in range(0, np_array.shape[1], blocksize)]
 
-    def gpu_encode_test(self):
-        self.ctx.texture(self.input_image.size, self.components, self.buffer).use()
+    # def gpu_encode_test(self):
+    #     self.ctx.texture(self.input_image.size, self.components, self.buffer).use()
 
-        fbo = self.ctx.simple_framebuffer(self.input_image.size)
-        fbo.use()
+    #     fbo = self.ctx.simple_framebuffer(self.input_image.size)
+    #     fbo.use()
 
-        self.vao.render(moderngl.TRIANGLE_STRIP)
+    #     self.vao.render(moderngl.TRIANGLE_STRIP)
 
-        Image.frombytes("RGB", fbo.size, fbo.read()).show()
+    #     Image.frombytes("RGB", fbo.size, fbo.read()).show()
 
     def encode(self, image_format: ImageFormat) -> bytes:
         encoded_data = bytes()

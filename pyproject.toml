@@ -1,7 +1,7 @@
 [project]
 name = "freighter"
 dynamic = ["version"]
-dependencies = ["pillow", "moderngl", "dolreader", "jsonpickle", "pyelftools", "geckolibs"]
+dependencies = ["pillow", "dolreader", "jsonpickle", "pyelftools", "geckolibs"] #,"moderngl"]
 
 description = "Kai's GameCube Toolkit enabling C/C++ code injection into .dol executables."
 readme = "README.md"

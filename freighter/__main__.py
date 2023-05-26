@@ -21,10 +21,10 @@ def timeit(func):
 
     return timeit_wrapper
 
-@timeit
-def test1():
-    texture = GameCubeTexture("test.png")
-    texture.gpu_encode_test()
+# @timeit
+# def test1():
+#     texture = GameCubeTexture("test.png")
+#     texture.gpu_encode_test()
 
 
 if __name__ == "__main__":
