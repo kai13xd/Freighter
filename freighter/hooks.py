@@ -1,6 +1,6 @@
 from dolreader.dol import DolFile
-from freighter.colors import RED, GREEN, PURPLE, ORANGE, CYAN
-from freighter.console import Console
+from freighter.colors import *
+from freighter.console import *
 from freighter.doltools import *
 from geckolibs.geckocode import GeckoCommand, Write16, Write32, WriteBranch, WriteString
 
@@ -35,7 +35,7 @@ class Hook(object):
     def write_geckocommand(self, f):
         self.good = True
 
-    def dump_info(self):
+    def __repr__(self):
         return repr("{:s} {:08X}".format("{:13s}".format("[Hook]       "), self.address))[+1:-1]
 
 
@@ -65,8 +65,8 @@ class BranchHook(Hook):
             f.write(gecko_command.as_text() + "\n")
             self.good = True
 
-    def dump_info(self):
-        Console.print(f" 💉 {f'{ORANGE}[{ORANGE}BranchLink{ORANGE}]' if self.lk_bit else f'{PURPLE}[Branch]'} 0x{self.address:x}{f'{GREEN} ✔️ {self.symbol_name}' if self.good else f'{RED} ❌ {self.symbol_name+RED}    Address was not found!'}")
+    def __repr__(self):
+        return f"💉 {f'{ORANGE}BranchLink' if self.lk_bit else f'{PURPLE}[Branch]'} 0x{self.address:x}{f'{GREEN} ✔️ {self.symbol_name}' if self.good else f'{RED} ❌ {self.symbol_name+RED}    Address was not found!'}"
 
 
 class PointerHook(Hook):
@@ -89,8 +89,8 @@ class PointerHook(Hook):
             f.write(gecko_command.as_text() + "\n")
             self.good = True
 
-    def dump_info(self):
-        return f" 💉 {CYAN}[Pointer]    0x{self.address:x}{f'{GREEN} ✔️' if self.good else f'{RED} ❌'} {self.symbol_name}"
+    def __repr__(self):
+        return f"💉 {CYAN}Pointer 0x{self.address:x}{f'{GREEN} ✔️' if self.good else f'{RED} ❌'} {self.symbol_name}"
 
 
 class StringHook(Hook):
@@ -121,15 +121,8 @@ class StringHook(Hook):
         f.write(gecko_command.as_text() + "\n")
         self.good = True
 
-    def dump_info(self):
-        return repr(
-            '{:s} {:08X} {:s} "{:s}"'.format(
-                "[String]     ",
-                self.address,
-                "-->" if self.good else "-X>",
-                self.string,
-            )
-        )[+1:-1]
+    def __repr__(self):
+        return f'✍️ {PURPLE}StringHook 0x{self.address:x} -> "{self.string}"'
 
 
 class FileHook(Hook):
@@ -168,15 +161,8 @@ class FileHook(Hook):
         f.write(gecko_command.as_text() + "\n")
         self.good = True
 
-    def dump_info(self):
-        return repr(
-            '{:s} {:08X} {:s} "{:s}"'.format(
-                "[File]       ",
-                self.address,
-                "-->" if self.good else "-X>",
-                self.filepath,
-            )
-        )[+1:-1]
+    def __repr__(self):
+        return f'[File] 0x{self.address:x} -> "{self.filepath}"'
 
 
 class Immediate16Hook(Hook):
@@ -227,7 +213,7 @@ class Immediate16Hook(Hook):
             f.write(gecko_command.as_text() + "\n")
             self.good = True
 
-    def dump_info(self):
+    def __repr__(self):
         return repr(
             "{:s} {:08X} {:s} {:s} {:s}".format(
                 "[Immediate16]",
@@ -292,13 +278,6 @@ class Immediate12Hook(Hook):
             f.write(gecko_command.as_text() + "\n")
             self.good = True
 
-    def dump_info(self):
-        return repr(
-            "{:s} {:08X} {:s} {:s} {:s}".format(
-                "[Immediate12]",
-                self.address,
-                "-->" if self.good else "-X>",
-                self.symbol_name,
-                self.modifier,
-            )
-        )[+1:-1]
+    def __repr__(self):
+        return f'[Immediate12] 0x{self.address:x} {self.symbol_name} {self.modifier}'
+     

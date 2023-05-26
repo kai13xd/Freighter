@@ -10,6 +10,7 @@ from freighter.path import Path, DirectoryPath, FilePath
 from freighter.arguments import Arguments
 from freighter.toml import *
 from freighter.numerics import UInt
+import tkinter.filedialog
 
 PLATFORM = system()
 
@@ -19,7 +20,6 @@ DEFAULT_FOLDERS = {
     "INCLUDE": DirectoryPath("include/"),
     "SYMBOLS": DirectoryPath("symbols/"),
     "BUILD": DirectoryPath("build/"),
-    "TEMP": DirectoryPath("temp/"),
 }
 
 FREIGHTER_LOCALAPPDATA = DirectoryPath.expandvars("%LOCALAPPDATA%/Freighter/")
@@ -74,8 +74,7 @@ class UserEnvironment(TOMLConfig):
     @classmethod
     def reset(cls):
         Console.print("Resetting UserEnvironment...")
-        if isfile(USERENVIRONMENT_PATH):
-            remove(USERENVIRONMENT_PATH)
+        USERENVIRONMENT_PATH.delete(True)
         user_environment = UserEnvironment()
 
         Console.print("Finished")
@@ -102,11 +101,10 @@ class UserEnvironment(TOMLConfig):
                 self.DevKitProPath = path
                 self.set_binutils(path)
                 return
-        path = input(f"Freighter could not find your devkitPro folder. Expected to be found at {EXPECTED_DEVKITPRO_PATHS[0]}.\n Input the path to set it:")
-        self.set_binutils(DirectoryPath(path))
 
+        Console.print(f"Freighter could not find your devkitPro folder. Expected to be found at {EXPECTED_DEVKITPRO_PATHS[0]}.\n")
         while not self.verify_devkitpro():
-            path = input(f"Try again:")
+            path = DirectoryPath(tkinter.filedialog.askdirectory(title="Please select your devkitPro folder."))
             self.set_binutils(DirectoryPath(path))
 
     def set_dolphin_paths(self, dolphin_user_path: DirectoryPath):
@@ -118,10 +116,11 @@ class UserEnvironment(TOMLConfig):
         if EXPECTED_DOLPHIN_USERPATH.exists():
             self.set_dolphin_paths(EXPECTED_DOLPHIN_USERPATH)
             return
-        path = input(f"Freighter could not find your Dolphin User folder. Expected to be found at {EXPECTED_DOLPHIN_USERPATH}.\n Input the path to set it:") + "/"
-        self.set_dolphin_paths(DirectoryPath(path))
+
+        Console.print(f"Freighter could not find your Dolphin User folder. Expected to be found at {EXPECTED_DOLPHIN_USERPATH}.\n")
+
         while not self.verify_dolphin():
-            path = input("Try again:")
+            path = DirectoryPath(tkinter.filedialog.askdirectory(title="Please select your Dolphin User folder."))
             self.set_dolphin_paths(DirectoryPath(path))
 
     def verify_devkitpro(self) -> bool:
@@ -167,7 +166,7 @@ class Profile(TOMLObject):
     GeckoFolder: DirectoryPath = DEFAULT_FOLDERS["GECKO"]
     SymbolsFolder: DirectoryPath = DEFAULT_FOLDERS["SYMBOLS"]
     LinkerScripts: list[FilePath] = field(default_factory=list[FilePath])
-    TemporaryFilesFolder: DirectoryPath = DEFAULT_FOLDERS["TEMP"]
+    TemporaryFilesFolder: DirectoryPath = DirectoryPath("temp/")
     InputSymbolMap: FilePath = field(default=FilePath(""))
     OutputSymbolMapPaths: list[FilePath] = field(default_factory=list[FilePath])
     StringHooks: dict[str, str] = field(default_factory=dict[str, str])
@@ -219,7 +218,7 @@ class Project(TOMLObject):  # This should serialize to [Project.WhateverProjectN
 
 
 @dataclass
-class ProjectListConfig(TOMLConfig):
+class ProjectManager(TOMLConfig):
     Projects: dict[str, Project]
 
     def __init__(self):
@@ -227,60 +226,75 @@ class ProjectListConfig(TOMLConfig):
         if PROJECTLIST_PATH.exists():
             self.load(PROJECTLIST_PATH)
 
-    def add_project(self, project_path: DirectoryPath):
-        if not project_path:
-            return
-
-        config_path = project_path.create_filepath("ProjectConfig.toml")
+    def import_project(self) -> None:
+        project_dir = DirectoryPath(tkinter.filedialog.askdirectory(title="Please select a project folder."))
+        config_path = project_dir.create_filepath("ProjectConfig.toml")
+        config_path.assert_exists()
         project_config = ProjectConfig()
         project_config.load(config_path)
+        if not self.contains_project(project_config.ProjectName):
+            self.Projects[project_config.ProjectName] = Project(project_dir, config_path)
+            self.save(PROJECTLIST_PATH)
+            Console.print(f'Imported {project_config.ProjectName} from "{config_path}"', PrintType.INFO)
+        exit(0)
 
-        self.Projects[project_config.ProjectName] = Project(project_path, config_path)
-        self.save(PROJECTLIST_PATH)
+    def contains_project(self, project_name: str) -> bool:
+        if project_name in self.Projects.keys():
+            Console.print(f"Freighter already has an imported project under the alias {project_name}", PrintType.ERROR)
+            Console.print(self.Projects[project_name])
+            return True
+        return False
 
-    def new_project(self, args: Arguments.NewArg):
+    def new_project(self, args: Arguments.NewArg) -> None:
         if not args:
             return
-        project_path = args.project_path.absolute()
-        chdir(project_path)
 
-        if isfile(DEFAULT_PROJECT_CONFIG_NAME):
-            Console.print("A project already exists in the current working directory. Aborting.")
-            exit(0)
-        banner = Banner()
-        config = Profile.default
+        if not self.contains_project(args.project_name):
+            project_dir = args.project_path.absolute()
+            project_dir.create()
 
-        for default_path in DEFAULT_FOLDERS.values():
-            default_path.create()
+            chdir(project_dir)
+            config_path = project_dir.create_filepath(DEFAULT_PROJECT_CONFIG_NAME)
+            if config_path.exists():
+                project_config = ProjectConfig()
+                project_config.load(config_path)
+                Console.print(f"A project named {project_config.ProjectName} already exists at given path. Did you mean to import it?")
+                exit(0)
 
-        config_path = project_path.create_filepath(DEFAULT_PROJECT_CONFIG_NAME)
+            project_config = ProjectConfig.default(args.project_name)
 
-        self.Projects[args.project_name] = Project(project_path, config_path)
+            for default_path in DEFAULT_FOLDERS.values():
+                default_path.create()
 
-        with open(DEFAULT_PROJECT_CONFIG_NAME, "w+") as f:
-            f.write(banner.toml_string + config.toml_string)
-        self.save(PROJECTLIST_PATH)
+            project_config.save(config_path)
+            self.Projects[args.project_name] = Project(project_dir, config_path)
+            self.save(PROJECTLIST_PATH)
+
+        exit(0)
+
+    def print(self):
+        for project_name, project in self.Projects.items():
+            print(f"{project_name}")
 
 
 @dataclass
 class ProjectConfig(TOMLConfig):
-    config_path: ClassVar[FilePath]
-    selected_profile: ClassVar[Profile]
     ProjectName: str = ""
     BannerConfig: Banner = field(default_factory=Banner)
     Profiles: dict[str, Profile] = field(default_factory=dict[str, Profile])
 
     def init(self, config_path: FilePath, profile_name: str):
-        ProjectConfig.config_path = config_path
-        self.load(ProjectConfig.config_path)
+        self.config_path = config_path
+        self.load(self.config_path)
 
         if profile_name:
-            ProjectConfig.selected_profile = self.Profiles[profile_name]
+            self.selected_profile = self.Profiles[profile_name]
         else:
-            ProjectConfig.selected_profile = next(iter(self.Profiles.values()))
-            ProjectConfig.selected_profile.verify_paths()
+            self.selected_profile = next(iter(self.Profiles.values()))
+            self.selected_profile.verify_paths()
 
     @classmethod
-    @property
-    def default_toml_string(cls) -> str:
-        return Banner().toml_string + Profile.default.toml_string
+    def default(cls, project_name):
+        profiles = dict[str, Profile]()
+        profiles["Debug"] = Profile.default
+        return cls(project_name, Banner(), profiles)

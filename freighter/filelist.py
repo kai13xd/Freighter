@@ -118,7 +118,7 @@ class HeaderFile(File):
 
                 # Check include folders
                 resolved_path = ""
-                for include_folder in ProjectConfig.selected_profile.IncludeFolders:
+                for include_folder in FileList.include_folders:
                     resolved_path = FilePath(include_folder / include_path)
                     if resolved_path.exists():
                         dependencies.add(resolved_path)
@@ -142,7 +142,7 @@ class SourceFile(HeaderFile):
     def __init__(self, path: FilePath) -> None:
         super().__init__(path)
         if self.filepath.suffix in [".c", ".cpp"]:
-            object_filepath = FilePath(ProjectConfig.selected_profile.TemporaryFilesFolder / (self.filepath.name + ".o"))
+            object_filepath = FilePath(FileList.temp_folder / (self.filepath.name + ".o"))
             self.object_file = ObjectFile(object_filepath)
             FileList.add(self.object_file)
 
@@ -184,7 +184,8 @@ from freighter.config import FREIGHTER_LOCALAPPDATA, ProjectConfig
 class FileList:
     previous_state: dict[str, File]
     filelist = dict[str, File]()
-
+    include_folders: list[DirectoryPath]
+    temp_folder: DirectoryPath
     @classmethod
     def __init__(cls, project_config: ProjectConfig):
         cls.filehash_path = FilePath(f"{FREIGHTER_LOCALAPPDATA}/{project_config.ProjectName}_FileList.json")
@@ -193,7 +194,9 @@ class FileList:
                 cls.previous_state = jsonpickle.loads(f.read())
         else:
             cls.previous_state = dict[str, File]()
-        cls.config_path = ProjectConfig.config_path
+        cls.config_path = project_config.config_path
+        cls.include_folders = project_config.selected_profile.IncludeFolders
+        cls.temp_folder = project_config.selected_profile.TemporaryFilesFolder
         File(cls.config_path)
 
     @classmethod
@@ -206,17 +209,17 @@ class FileList:
         cls.filelist[str(file)] = file
 
     @classmethod
-    def get(cls, file: PathLike) -> File:
+    def get(cls, file: File) -> File:
         return cls.filelist[str(file)]
 
     @classmethod
-    def contains(cls, file: PathLike) -> bool:
-        return file in cls.filelist.keys()
+    def contains(cls, file: File) -> bool:
+        return str(file) in cls.filelist.keys()
 
     @classmethod
-    def is_cached(cls, file: PathLike) -> bool:
-        return file in cls.previous_state.keys()
+    def is_cached(cls, file: File) -> bool:
+        return str(file) in cls.previous_state.keys()
 
     @classmethod
-    def get_cached_hash(cls, file: PathLike) -> str:
+    def get_cached_hash(cls, file: File) -> str:
         return cls.previous_state[str(file)].sha256hash

@@ -8,7 +8,7 @@ Freighter is command-line based toolkit for setting up and building C/C++ projec
 
 # Installation
 
-> ### Ensure you are using the latest version of `Python 3.11 or greater` -> https://www.python.org/downloads/).\*\*
+> ### Ensure you are using the latest version of `Python 3.11 or greater` -> https://www.python.org/downloads/)
 
 This package is made available through PyPi:
 
@@ -35,13 +35,13 @@ After installation open your cli of choice and enter `freighter`
 -build <Project Name> [Profile]: Builds the project with the selected profile.
 Defaults to first profile in the config if no arguments are passed.
 
--add <Project Path>: Adds a project containing a ProjectConfig.toml to Freighter's project list.
-
--config [path to TOML file]: Overrides the default project config path.
+-import : Opens a filedialog to import a project directory into Freighter's ProjectManager.
 
 -clean : Removes all temporary files and resets the cache. Useful if Freighter throws an error about missing symbols if the filecache becomes bad.
 
--verbose : Print extra info to the console
+-verbose : Print verbose information to the console
+
+-debug : Print debug and verbose information to the console
 
 -reset : Reconfigures your UserEnvironment.toml
 ```
@@ -55,7 +55,8 @@ You can generate a new project by using `freighter new ProjectName`
 ## ProjectConfig.toml
 
 ```toml
-[Banner]
+ProjectName = "MyProject"
+[BannerConfig]
 BannerImage = "banner.png"
 Title = "GameTitle"
 GameName = "GameTitle"
@@ -64,7 +65,8 @@ ShortMaker = "MyOrganization"
 Description = "This is my game's description!"
 OutputPath = "build/files/opening.bnr"
 
-[Profile]
+
+[Profiles.Debug]
 GameID = "FREI01"
 InjectionAddress = 0x0
 InputDolFile = "main.dol"

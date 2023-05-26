@@ -28,10 +28,10 @@ def test1():
 
 
 if __name__ == "__main__":
-    import cProfile
+    # import cProfile
 
-    pr = cProfile.Profile()
-    pr.enable()
+    # pr = cProfile.Profile()
+    # pr.enable()
     main()
-    pr.disable()
-    pr.print_stats(sort="cumtime")
+    # pr.disable()
+    # pr.print_stats(sort="cumtime")

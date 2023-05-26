@@ -16,7 +16,7 @@ from geckolibs.geckocode import AsmInsert, AsmInsertXOR
 
 from freighter.config import *
 from freighter.colors import *
-from freighter.console import Console, Compiling, Success, Error, Linked
+from freighter.console import *
 from freighter.exceptions import *
 from freighter.fileformats import *
 from freighter.filelist import *
@@ -33,7 +33,7 @@ class FreighterProject:
         self.project_name = project_config.ProjectName
         self.user_environment = user_environment
         FileList(project_config)
-        self.profile = project_config.selected_profile  # Allows multiprocessing processes to have context
+        self.profile: Profile = project_config.selected_profile  # Allows multiprocessing processes to have context
         self.banner_config = project_config.BannerConfig
         self.compiler_args = project_config.selected_profile.CompilerArgs
         self.ld_args = project_config.selected_profile.LDArgs
@@ -124,18 +124,15 @@ class FreighterProject:
         self.create_banner()
 
         self.build_time = time() - build_start_time
-        Console.print(f'\n{GREEN}🎊 BUILD COMPLETE 🎊\nSaved .dol to {CYAN}"{self.profile.OutputDolFile}"{GREEN}!')
+        Console.print(f'\n{GREEN}🎊 Build Complete! 🎊\nSaved final binary to "{self.profile.OutputDolFile}"!')
         self.print_extras()
         self.final_object_file.calculate_hash()
         FileList.save_state()
 
     def cleanup(self):
-        Console.print(f'{CYAN}Attempting to clean up temporary files at "{self.profile.TemporaryFilesFolder}"')
-        if self.profile.TemporaryFilesFolder.exists():
-            self.profile.TemporaryFilesFolder.rmtree()
-            Console.print("Removed temporary files.")
-        else:
-            Console.print("Nothing to clean up.")
+        Console.print(f'{CYAN}Cleaning up temporary files at "{self.profile.TemporaryFilesFolder}"')
+        self.profile.TemporaryFilesFolder.delete()
+        Console.print("Removed temporary files.")
 
     def create_banner(self) -> None:
         if self.banner_config:
@@ -208,27 +205,35 @@ class FreighterProject:
                 self.object_files.append(source_file.object_file)
 
     def compile(self, compile_list: list[SourceFile]) -> None:
-        failed_compilations = list[SourceFile]()
+        failed_compilations = list[tuple[SourceFile, str]]()
         with ProcessPoolExecutor() as executor:
             tasks = []
             for source_file in compile_list:
-                Console.print(f"{Compiling} {source_file}")
+                Console.print(f'{COMPILING} "{source_file}"')
                 task = executor.submit(self.compile_task, source_file, source_file.object_file)
                 tasks.append(task)
             for result in as_completed(tasks):
                 exitcode, source_file, out, err = result.result()
                 if exitcode:
-                    failed_compilations.append(source_file)
-                    Console.print(f'\n{Error} failed to compile:{CYAN}\n{err}")')
+                    failed_compilations.append((source_file, err))
+                    Console.print(f'{ERROR} "{source_file}"{CYAN}')
                 else:
-                    Console.print(f'{Success} "{source_file}"{CYAN}{out}')
+                    Console.print(f'{SUCCESS} "{source_file}"{CYAN}')
                     source_file.object_file.is_dirty = True
 
         if failed_compilations:
-            source_file_error = ""
-            for source_file in failed_compilations:
-                source_file_error += str(source_file) + "\n"
-            raise Exception(f"{ORANGE}Build process halted. Please fix code errors for the following files:\n{CYAN}" + source_file_error)
+            bad_source_files = ""
+            for source_file, error in failed_compilations:
+                import re
+
+                ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", re.VERBOSE)
+                errorstr = ansi_escape.sub("", error)
+                errorlines = errorstr.split("\n")
+                length = max(len(line) for line in errorlines)
+                header = f"{CYAN}{'=' * length}{AnsiAttribute.RESET}\n"
+                Console.print(f'{header}{ORANGE}{AnsiAttribute.BOLD}Compile Errors{AnsiAttribute.RESET}: "{source_file}"\n{header}{error}')
+                bad_source_files += str(source_file) + "\n"
+            raise FreighterException(f"{ORANGE}Build process halted. Please fix code errors for the following files:\n{CYAN}" + bad_source_files)
 
     def compile_task(self, source_file: SourceFile, output: ObjectFile) -> tuple[int, SourceFile, str, str]:
         args = []
@@ -247,7 +252,7 @@ class FreighterProject:
 
     def find_undefined_symbols(self, object_file: ObjectFile):
         nm_file = self.dump_nm(object_file)
-        Console.print(f"{ORANGE}Analyzing NM Output -> {CYAN}{nm_file}")
+        Console.print(f'{ANALYZING} "{nm_file}"')
         with open(nm_file, "r") as f:
             for line in f:
                 type, symbol_name = line[8:].strip().split(" ")
@@ -289,7 +294,7 @@ class FreighterProject:
     def load_symbol_definitions(self):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
         Console.print(f"{ORANGE}Loading manually defined symbols...")
-        for file in self.profile.SymbolsFolder.find_files("*.txt"):
+        for file in self.profile.SymbolsFolder.find_files(".txt"):
             with open(file.as_posix(), "r") as f:
                 lines = f.readlines()
 
@@ -308,98 +313,94 @@ class FreighterProject:
                         symbol.section = section
 
     def process_pragmas(self):
-        def get_function_symbol(lines: Iterator[tuple[int, str]], is_c_linkage: bool = False) -> tuple[int, Iterator[tuple[int, str]], str]:
-            """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
-            """Also doesn't account for namespaces that arent in the function signature"""
-            while True:
-                line_number, line = next(lines)
+        for source_file in self.source_files:
+            if source_file in self.profile.IgnoreHooks:
+                continue
+            is_c_linkage = False
+            if source_file.filepath.suffix == ".c":
+                is_c_linkage = True
+            with open(source_file, "r", encoding="utf8") as f:
+                lines = enumerate(f.readlines())
+            for line_number, line in lines:
                 line = strip_comments(line)
-                if 'extern "C"' in line:
-                    is_c_linkage = True
-                if not line:
+                if not line.startswith("#p"):
                     continue
-                elif "(" in line:
-                    # line = re.sub(".*[\*>] ",'',line) # remove templates
-                    while line.startswith(("*", "&")):  # throw out trailing *'s and &'s
-                        line = line[:1]
-                    line = re.findall("[A-Za-z0-9_:]*\(.*\)", line)[0]
-                    if is_c_linkage:
-                        # c symbols have no params
-                        return line_number, lines, re.sub("\(.*\)", "", line)
-                    if "()" in line:
-                        return line_number, lines, line
-                    it = iter(re.findall('(extern "C"|[A-Za-z0-9_]+|[:]+|[<>\(\),*&])', line))
-                    chunks = []
-                    depth = 0
-                    for s in it:
-                        if s in ["const", "volatile", "unsigned", "signed"]:
-                            chunks.append(s + " ")  # add space
-                            continue
-                        if s.isalpha():
-                            v = next(it)
-                            if depth and v.isalpha():
-                                chunks.append(s)
-                                continue
-                            else:
-                                chunks.append(s)
-                                s = v
-                            if s == "<":
-                                depth += 1
-                            elif s == ">":
-                                depth -= 1
-                            elif s == ",":
-                                chunks.pop()
-                                chunks.append(", ")
-                                continue
-                            elif s == ")":
-                                chunks.pop()
-                        chunks.append(s)
-                    func = ""
-                    for s in chunks:
-                        func += s
-                        func = func.replace("const char", "char const")  # dumb
-                    return line_number, lines, func
-                for source_file in self.source_files:
-                    if source_file in self.profile.IgnoreHooks:
+                line = line.removeprefix("#pragma ")
+                if line.startswith("hook"):
+                    branch_type, *addresses = line.removeprefix("hook ").split(" ")
+                    line_number, lines, function_symbol = self.get_function_symbol(lines, is_c_linkage)
+                    if branch_type == "bl":
+                        for address in addresses:
+                            self.hooks.append(BranchHook(address, function_symbol, True))
+                    elif branch_type == "b":
+                        for address in addresses:
+                            self.hooks.append(BranchHook(address, function_symbol))
+                    else:
+                        raise FreighterException(f"{branch_type} is not a valid supported branch type for #pragma hook!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
+                elif line.startswith("inject"):
+                    inject_type, *addresses = line.removeprefix("inject ").split(" ")
+                    if inject_type == "pointer":
+                        line_number, lines, function_symbol = self.get_function_symbol(lines, is_c_linkage)
+                        for address in addresses:
+                            self.hooks.append(PointerHook(address, function_symbol))
+                    elif inject_type == "string":
+                        for address in addresses:
+                            inject_string = ""
+                            self.hooks.append(StringHook(address, inject_string))
+                    else:
+                        raise FreighterException(f"Arguments for {PURPLE}{line}{CYAN} are incorrect!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
+
+    def get_function_symbol(self, lines: Iterator[tuple[int, str]], is_c_linkage: bool = False) -> tuple[int, Iterator[tuple[int, str]], str]:
+        """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
+        """Also doesn't account for namespaces that arent in the function signature"""
+        while True:
+            line_number, line = next(lines)
+            line = strip_comments(line)
+            if 'extern "C"' in line:
+                is_c_linkage = True
+            if not line:
+                continue
+            elif "(" in line:
+                # line = re.sub(".*[\*>] ",'',line) # remove templates
+                while line.startswith(("*", "&")):  # throw out trailing *'s and &'s
+                    line = line[:1]
+                line = re.findall("[A-Za-z0-9_:]*\(.*\)", line)[0]
+                if is_c_linkage:
+                    # c symbols have no params
+                    return line_number, lines, re.sub("\(.*\)", "", line)
+                if "()" in line:
+                    return line_number, lines, line
+                iterator = iter(re.findall('(extern "C"|[A-Za-z0-9_]+|[:]+|[<>\(\),*&])', line))
+                chunks = []
+                depth = 0
+                for s in iterator:
+                    if s in ["const", "volatile", "unsigned", "signed"]:
+                        chunks.append(s + " ")  # add space
                         continue
-                    is_c_linkage = False
-                    if source_file.extension == ".c":
-                        is_c_linkage = True
-
-                    with open(source_file, "r", encoding="utf8") as f:
-                        lines = enumerate(f.readlines())
-
-                    for line_number, line in lines:
-                        line = strip_comments(line)
-
-                        if not line.startswith("#p"):
+                    if s.isalpha():
+                        v = next(iterator)
+                        if depth and v.isalpha():
+                            chunks.append(s)
                             continue
-
-                    line = line.removeprefix("#pragma ")
-                    if line.startswith("hook"):
-                        branch_type, *addresses = line.removeprefix("hook ").split(" ")
-                        line_number, lines, function_symbol = get_function_symbol(lines, is_c_linkage)
-                        if branch_type == "bl":
-                            for address in addresses:
-                                self.hooks.append(BranchHook(address, function_symbol, True))
-                        elif branch_type == "b":
-                            for address in addresses:
-                                self.hooks.append(BranchHook(address, function_symbol))
                         else:
-                            raise FreighterException(f"{branch_type} is not a valid supported branch type for #pragma hook!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
-                    elif line.startswith("inject"):
-                        inject_type, *addresses = line.removeprefix("inject ").split(" ")
-
-                        if inject_type == "pointer":
-                            line_number, lines, function_symbol = get_function_symbol(lines, is_c_linkage)
-                            for address in addresses:
-                                self.hooks.append(PointerHook(address, function_symbol))
-                        if inject_type == "string":
-                            for address in addresses:
-                                inject_string = ""
-                                self.hooks.append(StringHook(address, inject_string))
-                        else:
-                            raise FreighterException(f"Arguments for {PURPLE}{line}{CYAN} are incorrect!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
+                            chunks.append(s)
+                            s = v
+                        if s == "<":
+                            depth += 1
+                        elif s == ">":
+                            depth -= 1
+                        elif s == ",":
+                            chunks.pop()
+                            chunks.append(", ")
+                            continue
+                        elif s == ")":
+                            chunks.pop()
+                    chunks.append(s)
+                func = ""
+                for s in chunks:
+                    func += s
+                    func = func.replace("const char", "char const")  # dumb
+                return line_number, lines, func
 
     def analyze_final(self):
         Console.print(f"{ORANGE}Dumping objdump...{CYAN}")
@@ -484,9 +485,9 @@ class FreighterProject:
         Console.print(f"{PURPLE}{args}", PrintType.VERBOSE)
         exit_code = subprocess.call(args, stdout=subprocess.PIPE)
         if exit_code:
-            raise RuntimeError(f'{Error} failed to link object files"\n')
+            raise RuntimeError(f'{ERROR} failed to link object files"\n')
         else:
-            Console.print(f"{Linked}{PURPLE} -> {CYAN}{self.final_object_file}")
+            Console.print(f"{LINKED}{PURPLE} -> {CYAN}{self.final_object_file}")
 
     def process_project(self):
         with open(self.final_object_file, "rb") as f:
@@ -502,7 +503,7 @@ class FreighterProject:
 
     def analyze_readelf(self, path: FilePath):
         section_map = {}
-        Console.print(f"{ORANGE}Analyzing {CYAN}{path}...")
+        Console.print(f'{ANALYZING} "{path}"')
         with open(path, "r") as f:
             while "  [ 0]" not in f.readline():
                 pass
@@ -531,7 +532,7 @@ class FreighterProject:
         for hook in self.hooks:
             hook.resolve(self.symbols)
             hook.apply_dol(self.dol)
-            Console.print(hook.dump_info())
+            Console.print(hook)
         bad_symbols = list[str]()
         for hook in self.hooks:
             if not hook.good and hook.symbol_name not in bad_symbols:
@@ -541,7 +542,7 @@ class FreighterProject:
             for name in bad_symbols:
                 badlist += f'{ORANGE}{name}{AnsiAttribute.RESET} found in {CYAN}"{self.symbols[name].source_file}"\n'
             raise FreighterException(
-                f'{Error} Freighter could not resolve hook addresses for the given symbols:\n{badlist}\n{AnsiAttribute.RESET}Possible Reasons:{ORANGE}\n• The cache Freighter uses for incremental builds is faulty and needs to be reset. Use -cleanup option to remove the cache.\n• If this is a C++ Symbol there may be a symbol definition missing from the {{Cyan}}"symbols"{{Orange}} folder'
+                f'{ERROR} Freighter could not resolve hook addresses for the given symbols:\n{badlist}\n{AnsiAttribute.RESET}Possible Reasons:{ORANGE}\n• The cache Freighter uses for incremental builds is faulty and needs to be reset. Use -cleanup option to remove the cache.\n• If this is a C++ Symbol there may be a symbol definition missing from the {{Cyan}}"symbols"{{Orange}} folder'
             )
         if len(self.bin_data) > 0:
             new_section: Section
@@ -557,21 +558,21 @@ class FreighterProject:
             self.dol.save(f)
 
     def apply_gecko(self):
-        for gecko_txt in self.profile.GeckoFolder.find_files(".txt"):
-            if gecko_txt.as_posix() in self.profile.IgnoredGeckoFiles:
+        for gecko_txt in self.profile.GeckoFolder.find_files(".txt", recursive=True):
+            if gecko_txt in self.profile.IgnoredGeckoFiles:
                 continue
             for child in GeckoCodeTable.from_text(open(gecko_txt, "r").read()):
                 self.gecko_table.add_child(child)
         while (len(self.bin_data) % 4) != 0:
             self.bin_data += b"\x00"
-        Console.print(f"\n{GREEN}[{GREEN}Gecko Codes{GREEN}]")
+        Console.print(f"\n[{GREEN}Gecko Codes{AnsiAttribute.RESET}]")
         for gecko_code in self.gecko_table:
-            status = f"{GREEN}ENABLED {CYAN}" if gecko_code.is_enabled() else f"{ORANGE}DISABLED{ORANGE}"
+            status = f"{GREEN}ENABLED {CYAN}" if gecko_code.is_enabled() else f"{RED}DISABLED{CYAN}"
             if gecko_code.is_enabled() == True:
                 for gecko_command in gecko_code:
                     if gecko_command.codetype not in SupportedGeckoCodetypes:
                         status = "OMITTED"
-            Console.print("{:12s} ${}".format(status, gecko_code.name))
+            Console.print(f"{status:12s} ${gecko_code.name}")
             if status == "OMITTED":
                 Console.print(f"{ORANGE}Includes unsupported codetypes:")
                 for gecko_command in gecko_code:

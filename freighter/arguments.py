@@ -51,10 +51,16 @@ class FreighterHelpFormatter(RawTextHelpFormatter):
 
 
 class Arguments:
-    @dataclass
     class NewArg:
         project_name: str
-        project_path: DirectoryPath = DirectoryPath("")
+        project_path: DirectoryPath
+
+        def __init__(self, args: list[str]):
+            self.project_name = args[0]
+            if len(args) == 1:
+                self.project_path = DirectoryPath.cwd
+            else:
+                self.project_path = DirectoryPath(args[1])
 
     @dataclass
     class BuildArg:
@@ -63,10 +69,11 @@ class Arguments:
 
     new: NewArg | None = None
     build: BuildArg | None = None
-    add: DirectoryPath | None = None
+    importarg: DirectoryPath | None = None
     clean: bool = False
     reset: bool = False
     verbose: bool = False
+    debug:bool = False
     parser = ArgumentParser(description=DESCRIPTION, epilog=EPILOG, add_help=False, prefix_chars="-", formatter_class=FreighterHelpFormatter)
 
     @classmethod
@@ -78,16 +85,15 @@ class Arguments:
         cls.parser.add_argument(
             "-build",
             metavar="<Project Name> [Profile]",
-            nargs="?",
+            nargs=ONE_OR_MORE,
             help="Builds the project with the selected profile.\nDefaults to first profile in the config if no arguments are passed.",
         )
-        cls.parser.add_argument("-add", metavar="<Project Path>", help="Adds a project containing a ProjectConfig.toml to Freighter's project list.")
-        cls.parser.add_argument("-config", metavar="[path to TOML file]", help="Overrides the default project config path.")
+        cls.parser.add_argument("-import", action="store_true", dest="importarg", help="Opens a filedialog to import a project directory into Freighter's ProjectManager.")
 
         cls.parser.add_argument("-clean", action="store_true", help="Removes all temporary files and resets the cache. Useful if Freighter throws an error about missing symbols if the filecache becomes bad.")
 
-        cls.parser.add_argument("-verbose", action="store_true", help="Print extra info to the console")
-
+        cls.parser.add_argument("-verbose", action="store_true", help="Print verbose information to the console")
+        cls.parser.add_argument("-debug", action="store_true", help="Print debug and verbose information to the console")
         cls.parser.add_argument("-reset", action="store_true", help="Reconfigures your UserEnvironment.toml")
 
         parsed_args = cls.parser.parse_args()
@@ -95,17 +101,16 @@ class Arguments:
         cls.help = parsed_args.help
 
         if parsed_args.build:
-            cls.build = cls.BuildArg(*(parsed_args.build,))
+            cls.build = cls.BuildArg(*parsed_args.build)
 
         if parsed_args.new:
-            cls.new = cls.NewArg(*(parsed_args.new,))
+            cls.new = cls.NewArg(parsed_args.new)
 
-        if parsed_args.add:
-            cls.add = DirectoryPath(parsed_args.add)
+        cls.importarg = parsed_args.importarg
 
-        cls.config = parsed_args.config
         cls.clean = parsed_args.clean
         cls.verbose = parsed_args.verbose
+        cls.debug = parsed_args.debug
         cls.reset = parsed_args.reset
 
     @classmethod
