@@ -295,7 +295,7 @@ class FreighterProject:
     def load_symbol_definitions(self):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
         Console.print(f"{ORANGE}Loading manually defined symbols...")
-        for file in self.profile.SymbolsFolder.find_files(".txt"):
+        for file in self.profile.SymbolsFolder.find_files(".txt",recursive=True):
             with open(file.as_posix(), "r") as f:
                 lines = f.readlines()
 
