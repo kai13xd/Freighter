@@ -10,7 +10,8 @@ from typing import ClassVar
 import jsonpickle
 from freighter.config import ProjectConfig
 from freighter.path import *
-
+from freighter.config import FREIGHTER_LOCALAPPDATA, ProjectConfig
+from freighter.arguments import Arguments
 
 @dataclass
 class Symbol:
@@ -178,7 +179,6 @@ class ObjectFile(File):
         self.symbols[symbol.name] = symbol
 
 
-from freighter.config import FREIGHTER_LOCALAPPDATA, ProjectConfig
 
 
 class FileList:
@@ -190,11 +190,12 @@ class FileList:
     @classmethod
     def __init__(cls, project_config: ProjectConfig):
         cls.filehash_path = FilePath(f"{FREIGHTER_LOCALAPPDATA}/{project_config.ProjectName}_FileList.json")
-        if cls.filehash_path.exists():
+        if Arguments.clean:
+            cls.filehash_path.delete()
+            cls.previous_state=dict[str, File]()
+        elif cls.filehash_path.exists():
             with open(cls.filehash_path, "r") as f:
                 cls.previous_state = jsonpickle.loads(f.read())
-        else:
-            cls.previous_state = dict[str, File]()
         cls.config_path = project_config.config_path
         cls.include_folders = project_config.selected_profile.IncludeFolders
         cls.temp_folder = project_config.selected_profile.TemporaryFilesFolder

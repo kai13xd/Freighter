@@ -131,7 +131,6 @@ class FreighterProject:
 
     def cleanup(self):
         Console.print(f'{CYAN}Cleaning up temporary files at "{self.profile.TemporaryFilesFolder}"')
-        FileList.filehash_path.delete()
         self.profile.TemporaryFilesFolder.delete()
         Console.print("Removed temporary files.")
 
@@ -415,7 +414,7 @@ class FreighterProject:
         with open(linkerscript_file, "w") as f:
 
             def write_section(section: str):
-                symbols = [x for x in self.symbols.values() if x.section == section]
+                symbols = [symbol for symbol in self.symbols.values() if symbol.section == section]
                 if not symbols:
                     return
                 f.write(f"\t{section} ALIGN(0x20):\n\t{{\n")
