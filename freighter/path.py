@@ -106,7 +106,7 @@ class DirectoryPath(Path):
             Console.print(f'{ORANGE}Directory Found "{self}"!', PrintType.VERBOSE)
             return True
         else:
-            Console.print(f'The folder "{self}" does not exist', PrintType.INFO)  # relative to the cwd "{getcwd()}"')
+            Console.print(f'The folder "{self}" does not exist', PrintType.VERBOSE)  # relative to the cwd "{getcwd()}"')
             return False
 
     def assert_exists(self) -> bool:
@@ -130,11 +130,13 @@ class DirectoryPath(Path):
                 globbed += glob(globstr, recursive=recursive,)
         else:
             globbed = glob(f"{self}/*", recursive=recursive)
-        
         result = list[FilePath]()
-        for path in globbed:
-            result.append(FilePath(path))
-        return result
+        if not globbed:
+            return result
+        else:
+            for path in globbed:
+                result.append(FilePath(path))
+            return result
 
     def find_dirs(self, recursive=False):
         result = list[DirectoryPath]()
@@ -158,12 +160,13 @@ class DirectoryPath(Path):
 
 
 class FilePath(Path):
+    
     def exists(self) -> bool:
         if isfile(self):
             Console.print(f'{ORANGE}File Found "{self}"!', PrintType.VERBOSE)
             return True
         else:
-            Console.print(f'The file "{self}" does not exist', PrintType.WARN)  # relative to the cwd "{getcwd()}"')
+            Console.print(f'The file "{self}" does not exist', PrintType.VERBOSE)  # relative to the cwd "{getcwd()}"')
             return False
 
     def delete(self, ask_confirm: bool = False):

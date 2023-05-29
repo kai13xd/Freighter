@@ -32,7 +32,7 @@ class FreighterProject:
     def __init__(self, user_environment: UserEnvironment, project_config: ProjectConfig):
         self.project_name = project_config.ProjectName
         self.user_environment = user_environment
-        FileList(project_config)
+        self.file_manager = FileManager(project_config)
         self.profile: Profile = project_config.selected_profile  # Allows multiprocessing processes to have context
         self.banner_config = project_config.BannerConfig
         self.compiler_args = project_config.selected_profile.CompilerArgs
@@ -70,7 +70,7 @@ class FreighterProject:
             for address, string in self.profile.StringHooks.items():
                 self.hooks.append(StringHook(address, string))
         filepath = self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".o")
-        self.final_object_file = ObjectFile(filepath)
+        self.final_object_file = ObjectFile(self.file_manager,filepath)
         self.gecko_table = GeckoCodeTable(self.profile.GameID, self.project_name)
 
     def build(self) -> None:
@@ -79,32 +79,7 @@ class FreighterProject:
             self.profile.TemporaryFilesFolder.create()
         self.get_source_files()
         self.process_pragmas()
-
-        compile_list = list[SourceFile]()
-        for source_file in self.source_files:
-            if source_file.needs_recompile():
-                compile_list.append(source_file)
-
-        if compile_list:
-            # Only compile if we have sourcefiles that need to be compiled
-            compile_start_time = time()
-            self.compile(compile_list)
-            self.compile_time = time() - compile_start_time
-
-            for source_file in compile_list:
-                if source_file.object_file.is_hash_same():
-                    # Update the symbol dict with the cached symbols
-                    Console.print(f"{source_file.object_file} is not modified!")
-                    self.symbols.update(source_file.object_file.symbols)
-                else:
-                    # Update the symbol dict for any new symbols
-                    self.find_undefined_symbols(source_file.object_file)
-        else:
-            # Else update the symbol dict with the cached symbols
-            for object_file in self.object_files:
-                self.symbols.update(object_file.symbols)
-            self.symbols.update(self.final_object_file.symbols)
-
+        self.compile()
         self.load_symbol_definitions()
         self.generate_linkerscript()
         self.link()
@@ -127,7 +102,7 @@ class FreighterProject:
         Console.print(f'\n{GREEN}🎊 Build Complete! 🎊\nSaved final binary to "{self.profile.OutputDolFile}"!')
         self.print_extras()
         self.final_object_file.calculate_hash()
-        FileList.save_state()
+        self.file_manager.save_state()
 
     def cleanup(self):
         Console.print(f'{CYAN}Cleaning up temporary files at "{self.profile.TemporaryFilesFolder}"')
@@ -200,40 +175,64 @@ class FreighterProject:
             for file in folder.find_files(".c", ".cpp", recursive=True):
                 if file in self.profile.IgnoredSourceFiles:
                     continue
-                source_file = SourceFile(file)
+                source_file = SourceFile(self.file_manager,file)
                 self.source_files.append(source_file)
                 self.object_files.append(source_file.object_file)
 
-    def compile(self, compile_list: list[SourceFile]) -> None:
-        failed_compilations = list[tuple[SourceFile, str]]()
-        with ProcessPoolExecutor() as executor:
-            tasks = []
-            for source_file in compile_list:
-                Console.print(f'{COMPILING} "{source_file}"')
-                task = executor.submit(self.compile_task, source_file, source_file.object_file)
-                tasks.append(task)
-            for result in as_completed(tasks):
-                exitcode, source_file, out, err = result.result()
-                if exitcode:
-                    failed_compilations.append((source_file, err))
-                    Console.print(f'{ERROR} "{source_file}"{CYAN}')
+    def compile(self) -> None:
+        compile_start_time = time()
+        compile_list = []
+        for source_file in self.source_files:
+            if source_file.needs_recompile():
+                source_file.object_file.is_dirty = True
+                compile_list.append(source_file)
+        
+        if compile_list:  
+            failed_compilations = list[tuple[SourceFile, str]]()
+            successful_compilations = list[SourceFile]()
+            with ProcessPoolExecutor() as executor:
+                tasks = []
+                for source_file in compile_list:
+                    Console.print(f'{COMPILING} "{source_file}"')
+                    task = executor.submit(self.compile_task, source_file, source_file.object_file)
+                    tasks.append(task)
+                for result in as_completed(tasks):
+                    exitcode, source_file, out, err = result.result()
+                    if exitcode:
+                        failed_compilations.append((source_file, err))
+                        Console.print(f'{ERROR} "{source_file}"{CYAN}')
+                        continue
+                    else:
+                        Console.print(f'{SUCCESS} "{source_file}"{CYAN}')
+                        successful_compilations.append(source_file)
+            if failed_compilations:
+                bad_source_files = ""
+                for source_file, error in failed_compilations:
+                    import re
+                    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", re.VERBOSE)
+                    errorstr = ansi_escape.sub("", error)
+                    errorlines = errorstr.split("\n")
+                    length = max(len(line) for line in errorlines)
+                    header = f"{CYAN}{'=' * length}{AnsiAttribute.RESET}\n"
+                    Console.print(f'{header}{ORANGE}{AnsiAttribute.BOLD}Compile Errors{AnsiAttribute.RESET}: "{source_file}"\n{header}{error}')
+                    bad_source_files += str(source_file) + "\n"
+                raise FreighterException(f"{ORANGE}Build process halted. Please fix code errors for the following files:\n{CYAN}" + bad_source_files)
+            
+            for source_file in successful_compilations:
+                if source_file.object_file.is_hash_same():
+                    Console.print(f'"{source_file}" resulted in the same binary.')
+                    self.symbols.update(source_file.object_file.restore_previous_state().symbols)
+                    self.find_undefined_symbols(source_file.object_file)
                 else:
-                    Console.print(f'{SUCCESS} "{source_file}"{CYAN}')
-                    source_file.object_file.is_dirty = True
-
-        if failed_compilations:
-            bad_source_files = ""
-            for source_file, error in failed_compilations:
-                import re
-
-                ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", re.VERBOSE)
-                errorstr = ansi_escape.sub("", error)
-                errorlines = errorstr.split("\n")
-                length = max(len(line) for line in errorlines)
-                header = f"{CYAN}{'=' * length}{AnsiAttribute.RESET}\n"
-                Console.print(f'{header}{ORANGE}{AnsiAttribute.BOLD}Compile Errors{AnsiAttribute.RESET}: "{source_file}"\n{header}{error}')
-                bad_source_files += str(source_file) + "\n"
-            raise FreighterException(f"{ORANGE}Build process halted. Please fix code errors for the following files:\n{CYAN}" + bad_source_files)
+                    # Update the symbol dict for any new symbols
+                    self.find_undefined_symbols(source_file.object_file)
+        else:
+            Console.print("No source files have been modified.")
+            self.symbols.update(self.final_object_file.restore_previous_state().symbols)
+        
+        self.compile_time = time() - compile_start_time
+            
+        
 
     def compile_task(self, source_file: SourceFile, output: ObjectFile) -> tuple[int, SourceFile, str, str]:
         args = []
@@ -286,10 +285,10 @@ class FreighterProject:
                     symbol.is_absolute = True
                 symbol.is_undefined = False
                 if not symbol.source_file:
-                    if object_file.source_file_name == self.project_name:
+                    if object_file.source_name == self.project_name:
                         symbol.source_file = ""  # Temporary workaround for symbols sourced from external libs
                     else:
-                        symbol.source_file = object_file.source_file_name
+                        symbol.source_file = object_file.source_name
 
     def load_symbol_definitions(self):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
