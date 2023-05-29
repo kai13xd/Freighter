@@ -29,8 +29,10 @@ class Console:
     verbose = f"{AnsiAttribute.BOLD}[{PURPLE}Verbose{AnsiAttribute.RESET}] "
     debug = f"{AnsiAttribute.BOLD}[{MAGENTA}Debug{AnsiAttribute.RESET}] "
 
-    re_string = re.compile(r"\"(.*)\"|\'(.*)\'")
+    re_string = re.compile(r'"(.*?)"')
+    re_string2 = re.compile(r"'(.*?)'")
     re_replace_string = rf'{ORANGE}"{CYAN}\1{ORANGE}"{AnsiAttribute.RESET}'
+    re_replace_string2 = rf"{ORANGE}'{CYAN}\1{ORANGE}'{AnsiAttribute.RESET}"
     re_hex = re.compile(r"(0[xX])([0-9a-fA-F]+)")
     re_replace_hex = rf"{CYAN}\1{GREEN}\2{AnsiAttribute.RESET}"
 
@@ -44,6 +46,7 @@ class Console:
         
         string = str(obj)
         string = Console.re_string.sub(Console.re_replace_string, string)
+        string = Console.re_string2.sub(Console.re_replace_string2, string)
         string = Console.re_hex.sub(Console.re_replace_hex, string)
         
         if type == PrintType.NORMAL:
