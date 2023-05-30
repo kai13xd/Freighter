@@ -354,6 +354,26 @@ class FreighterProject:
                             self.hooks.append(StringHook(address, inject_string))
                     else:
                         raise FreighterException(f"Arguments for {PURPLE}{line}{CYAN} are incorrect!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
+        
+        # May help fix stupid mistakes  
+        unique_addresses = {}
+        duplicates = defaultdict[int,list[BranchHook]](list[BranchHook])
+        for hook in [x for x in self.hooks if isinstance(x,BranchHook)]:
+            if hook.address not in unique_addresses.keys():
+                unique_addresses[hook.address] = hook
+            else:
+                duplicates[hook.address].append(hook)
+                if unique_addresses[hook.address] not in duplicates[hook.address]:
+                    duplicates[hook.address].append(unique_addresses[hook.address])
+        
+        if duplicates:
+            bad_hooks_string= ""
+            for address, hooks in duplicates.items():
+                bad_hooks_string += f"{hex(address)}\n"
+                for hook in hooks:
+                    bad_hooks_string += f'\t{hook.symbol_name} in "{hook.source_file}:{hook.line_number}"\n'
+            raise FreighterException(f"BranchHooks referencing different functions were found hooking into the same address!\n{bad_hooks_string}")
+            
 
     re_function_name:Pattern[str] = re.compile(r".* (\w*(?=\()).*")
     re_parameter_names:Pattern[str] = re.compile(r'([^\]&*]\w+)(,|(\)\[)|(\)\()|\))')

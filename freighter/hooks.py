@@ -24,7 +24,7 @@ class Hook(object):
         self.address = address
         self.data = 0
         self.symbol_name = ""
-
+        
     def resolve(self, symbols):
         return
 
@@ -40,8 +40,10 @@ class Hook(object):
 
 
 class BranchHook(Hook):
-    def __init__(self, address, symbol_name, lk_bit=False):
+    def __init__(self, address, symbol_name,source_file,line_number, lk_bit=False):
         Hook.__init__(self, address)
+        self.source_file = source_file
+        self.line_number = line_number
         self.symbol_name = symbol_name
         self.lk_bit = lk_bit
 
@@ -66,7 +68,7 @@ class BranchHook(Hook):
             self.good = True
 
     def __repr__(self):
-        return f"💉 {f'{ORANGE}BranchLink' if self.lk_bit else f'{PURPLE}[Branch]'} 0x{self.address:x}{f'{GREEN} ✔️ {self.symbol_name}' if self.good else f'{RED} ❌ {self.symbol_name+RED}    Address was not found!'}"
+        return f"💉 {f'{ORANGE}BranchLink' if self.lk_bit else f'{PURPLE}[Branch]'} 0x{self.address:x}{f'{GREEN} ✔️ {self.symbol_name}' if self.good else f'{RED} ❌ {self.symbol_name}{RED}    Address was not found!'}"
 
 
 class PointerHook(Hook):
