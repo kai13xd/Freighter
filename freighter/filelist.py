@@ -18,8 +18,6 @@ class Symbol:
     name = ""
     demangled_name = ""
     section = ""
-    address = 0
-    hex_address = ""
     size = 0
     is_complete_constructor = False
     is_base_constructor = False
@@ -33,7 +31,21 @@ class Symbol:
     is_absolute = False
     source_file = ""
     library_file = ""
-
+    _address = 0
+    @property
+    def address(self):
+        return self._address
+    @address.setter
+    def address(self,value:int):
+        self._address = value
+        
+    @property
+    def hex_address(self):
+        return hex(self._address)    
+    @hex_address.setter
+    def hex_address(self,value:str):
+        self._address = int(value,16)
+        
     def __repr__(self) -> str:
         if self.is_c_linkage:
             return self.name

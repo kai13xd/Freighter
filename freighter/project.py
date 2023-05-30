@@ -1,4 +1,5 @@
 import hashlib
+from re import Pattern
 import re
 import subprocess
 from collections import defaultdict
@@ -6,7 +7,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import cache
 from os import makedirs
 from time import time
-from typing import Iterator
+from typing import Iterator,DefaultDict
 
 from dolreader.dol import DolFile
 from dolreader.section import DataSection, Section, TextSection
@@ -29,7 +30,9 @@ def strip_comments(line: str):
 
 
 class FreighterProject:
+
     def __init__(self, user_environment: UserEnvironment, project_config: ProjectConfig):
+        
         self.project_name = project_config.ProjectName
         self.user_environment = user_environment
         self.file_manager = FileManager(project_config)
@@ -58,7 +61,7 @@ class FreighterProject:
             Console.print("Warning! DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
 
         if self.profile.SDA and self.profile.SDA2:
-            self.compiler_args += ["-msdata=sysv"]
+            self.compiler_args += ["-msdata=eabi"]
             self.ld_args += [
                 f"--defsym=_SDA_BASE_={hex(self.profile.SDA)}",
                 f"--defsym=_SDA2_BASE_={hex(self.profile.SDA2)}",
@@ -78,7 +81,9 @@ class FreighterProject:
         if not self.profile.TemporaryFilesFolder.exists():
             self.profile.TemporaryFilesFolder.create()
         self.get_source_files()
+        start = time()
         self.process_pragmas()
+        print(f"Processed pragmas in {time()-start} seconds")
         self.compile()
         self.load_symbol_definitions()
         self.generate_linkerscript()
@@ -165,7 +170,7 @@ class FreighterProject:
         """Dumps the output from DevKitPPC's powerpc-eabi-readelf.exe to a .txt file"""
         args = (self.user_environment.READELF, object_path) + args
 
-        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + "o.readelf")
+        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".o.readelf")
         with open(outpath, "w") as f:
             subprocess.call(args, stdout=f)
         return outpath
@@ -302,12 +307,13 @@ class FreighterProject:
                 line = line.rstrip().partition("//")[0]
                 if line:
                     name, address = line.split(" = ")
+                    if name == "sys":
+                        pass
                     if name in self.symbols:
                         symbol = self.symbols[name]
                         if symbol.source_file:  # skip this symbol because we are overriding it
                             continue
                         symbol.hex_address = address
-                        symbol.address = int(address, 16)
                         symbol.is_absolute = True
                         symbol.section = section
 
@@ -327,19 +333,19 @@ class FreighterProject:
                 line = line.removeprefix("#pragma ")
                 if line.startswith("hook"):
                     branch_type, *addresses = line.removeprefix("hook ").split(" ")
-                    line_number, lines, function_symbol = self.get_function_symbol(lines, is_c_linkage)
+                    line_number, lines, function_symbol = self.get_function_symbol(source_file,lines, is_c_linkage)
                     if branch_type == "bl":
                         for address in addresses:
-                            self.hooks.append(BranchHook(address, function_symbol, True))
+                            self.hooks.append(BranchHook(address, function_symbol,source_file.filepath,line_number, True))
                     elif branch_type == "b":
                         for address in addresses:
-                            self.hooks.append(BranchHook(address, function_symbol))
+                            self.hooks.append(BranchHook(address, function_symbol,source_file.filepath,line_number))
                     else:
                         raise FreighterException(f"{branch_type} is not a valid supported branch type for #pragma hook!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
                 elif line.startswith("inject"):
                     inject_type, *addresses = line.removeprefix("inject ").split(" ")
                     if inject_type == "pointer":
-                        line_number, lines, function_symbol = self.get_function_symbol(lines, is_c_linkage)
+                        line_number, lines, function_symbol = self.get_function_symbol(source_file,lines, is_c_linkage)
                         for address in addresses:
                             self.hooks.append(PointerHook(address, function_symbol))
                     elif inject_type == "string":
@@ -349,57 +355,64 @@ class FreighterProject:
                     else:
                         raise FreighterException(f"Arguments for {PURPLE}{line}{CYAN} are incorrect!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
 
-    def get_function_symbol(self, lines: Iterator[tuple[int, str]], is_c_linkage: bool = False) -> tuple[int, Iterator[tuple[int, str]], str]:
+    re_function_name:Pattern[str] = re.compile(r".* (\w*(?=\()).*")
+    re_parameter_names:Pattern[str] = re.compile(r'([^\]&*]\w+)(,|(\)\[)|(\)\()|\))')
+    re_flip_const:Pattern[str] = re.compile(r"(const) ([:\[\]<>\w]*[^ *&])")
+    re_flip_volatile:Pattern[str] = re.compile(r"(volatile) ([:\[\]<>\w]*[^ *&])")
+    re_flip_const_volatile:Pattern[str] = re.compile(r"(const volatile) ([:\[\]<>\w]*[^ *&])")
+    
+    def get_function_symbol(self,source_file:SourceFile, lines: Iterator[tuple[ int, str]], is_c_linkage: bool = False) -> tuple[int, Iterator[tuple[int, str]], str]:
         """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
         """Also doesn't account for namespaces that arent in the function signature"""
+      
         while True:
             line_number, line = next(lines)
-            line = strip_comments(line)
             if 'extern "C"' in line:
                 is_c_linkage = True
             if not line:
                 continue
-            elif "(" in line:
-                # line = re.sub(".*[\*>] ",'',line) # remove templates
-                while line.startswith(("*", "&")):  # throw out trailing *'s and &'s
-                    line = line[:1]
-                line = re.findall("[A-Za-z0-9_:]*\(.*\)", line)[0]
+            if "(" in line:
+                line = strip_comments(line)
+                line = line.rsplit('{')[0]
                 if is_c_linkage:
-                    # c symbols have no params
-                    return line_number, lines, re.sub("\(.*\)", "", line)
-                if "()" in line:
-                    return line_number, lines, line
-                iterator = iter(re.findall('(extern "C"|[A-Za-z0-9_]+|[:]+|[<>\(\),*&])', line))
-                chunks = []
-                depth = 0
-                for s in iterator:
-                    if s in ["const", "volatile", "unsigned", "signed"]:
-                        chunks.append(s + " ")  # add space
-                        continue
-                    if s.isalpha():
-                        v = next(iterator)
-                        if depth and v.isalpha():
-                            chunks.append(s)
-                            continue
+                    return line_number, lines, self.re_function_name.sub(r"\1",line,1)
+                try:
+                    result :list[str]= re.findall(r"(.*)(\(.*\))",line)[0]
+                    function_name, signature = result
+                    namespace_parts = function_name.split("::")
+                    if len(namespace_parts) > 1 and namespace_parts[-1] == namespace_parts[-2]:
+                        Console.print(f"'{line}' is a constructor")
+                    else:
+                        function_name = function_name.rsplit(" ",-1)[-1]
+                except:
+                    raise BadFunctionSignatureExecption(source_file,line_number, line)
+                if signature == '()':
+                    return line_number, lines, function_name + signature
+                signature = self.re_parameter_names.sub(r'\2',signature)
+                
+                if "const " in signature or "volatile " in signature:
+                    parameters = signature.split(",")
+                    parameters[0] = parameters[0][1:]
+                    parameters[-1] = parameters[-1][:-1]
+                    result = []
+                    for parameter in parameters:
+                        parameter = parameter.lstrip()
+                        if "volatile const" in parameter:
+                            parameter = parameter.replace("volatile const", "const volatile")
+                        if "const volatile" in parameter:
+                            parameter = self.re_flip_const_volatile.sub(r"\2 \1",parameter)
+                        elif "volatile" in parameter:
+                            parameter = self.re_flip_volatile.sub(r"\2 \1",parameter)
                         else:
-                            chunks.append(s)
-                            s = v
-                        if s == "<":
-                            depth += 1
-                        elif s == ">":
-                            depth -= 1
-                        elif s == ",":
-                            chunks.pop()
-                            chunks.append(", ")
-                            continue
-                        elif s == ")":
-                            chunks.pop()
-                    chunks.append(s)
-                func = ""
-                for s in chunks:
-                    func += s
-                    func = func.replace("const char", "char const")  # dumb
-                return line_number, lines, func
+                            # c++filt returns demangled symbols with 'type const*' or 'type const&' rather than 'const type*' or 'const type&'
+                            parameter = self.re_flip_const.sub(r"\2 \1",parameter)  
+                        # Passing types by value is implicitly const. c++filt returns a demangled symbol with const removed
+                        if parameter[-1] not in ["*","&"]:
+                            parameter = parameter.replace('const',"").replace("volatile","").rstrip()                        
+                        result.append(parameter)
+                    signature = f"({', '.join(result)})"
+                
+                return line_number, lines, function_name + signature
 
     def analyze_final(self):
         Console.print(f"{ORANGE}Dumping objdump...{CYAN}")
@@ -441,12 +454,12 @@ class FreighterProject:
             write_section(".text")
             write_section(".rodata")
             write_section(".data")
-            write_section(".bss")
+            write_section(".bss")  
             write_section(".sdata")
             write_section(".sbss")
             write_section(".sdata2")
             write_section(".sbss2")
-
+           
             f.write("\t/DISCARD/ :\n\t{\n")
             for section in self.profile.DiscardSections:
                 f.write(f"\t\t*({section}*);\n")
@@ -457,6 +470,7 @@ class FreighterProject:
 
             f.write(f"\t. = 0x{self.profile.InjectionAddress:4x};\n")
             f.write(
+                "\t__end__ = .;\n"
                 "\t.sdata ALIGN(0x20):\n\t{\n\t\t*(.sdata*)\n\t}\n\n"
                 "\t.sbss ALIGN(0x20):\n\t{\n\t\t*(.sbss*)\n\t}\n\n"
                 "\t.sdata2 ALIGN(0x20):\n\t{\n\t\t*(.sdata2*)\n\t}\n\n"
@@ -464,9 +478,16 @@ class FreighterProject:
                 "\t.rodata ALIGN(0x20):\n\t{\n\t\t*(.rodata*)\n\t}\n\n"
                 "\t.data ALIGN(0x20):\n\t{\n\t\t*(.data*)\n\t}\n\n"
                 "\t.bss ALIGN(0x20):\n\t{\n\t\t*(.bss*)\n\t}\n\n"
+                "\t.ctors ALIGN(0x20):\n\t{\n\t\t*(.ctors*)\n\t}\n"
+                "\t.dtors ALIGN(0x20):\n\t{\n\t\t*(.dtors*)\n\t}\n"
+                "\t.init ALIGN(0x20):\n\t{\n\t\t*(.init*)\n\t}\n"
+                "\t.fini ALIGN(0x20):\n\t{\n\t\t*(.fini*)\n\t}\n"
+                "\t.eh_frame ALIGN(0x20):\n\t{\n\t\t*(.eh_frame*)\n\t}\n"
                 "\t.text ALIGN(0x20):\n\t{\n\t\t*(.text*)\n\t}\n"
                 "}"
             )
+           
+      
         self.profile.LinkerScripts.append(linkerscript_file)
 
     def link(self):
@@ -482,9 +503,17 @@ class FreighterProject:
         args.extend(["-o", self.final_object_file.filepath])
 
         Console.print(f"{PURPLE}{args}", PrintType.VERBOSE)
-        exit_code = subprocess.call(args, stdout=subprocess.PIPE)
-        if exit_code:
-            raise RuntimeError(f'{ERROR} failed to link object files"\n')
+        process = subprocess.Popen(args, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = process.communicate()
+        
+        
+        if process.returncode:
+            re_quote = re.compile(r"(`)")
+            re_parens = re.compile(r"(\(.*\))")
+            error = re_quote.sub("'",err.decode())
+            error = re_parens.sub(rf'{MAGENTA}\n\t({PURPLE}\1{MAGENTA}){AnsiAttribute.RESET}\n',error)
+            Console.print(error)
+            raise FreighterException(f'{ERROR} failed to link object files"\n')
         else:
             Console.print(f"{LINKED}{PURPLE} -> {CYAN}{self.final_object_file}")
 
@@ -520,7 +549,6 @@ class FreighterProject:
                 if name[0] in self.symbols:
                     symbol = self.symbols[name[0]]
                     symbol.hex_address = "0x" + address
-                    symbol.address = int(address, 16)
                     symbol.size = int(size)
                     symbol.library_file = self.project_name + ".o"
                     if ndx == "ABS":
