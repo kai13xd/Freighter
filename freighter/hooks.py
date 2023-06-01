@@ -3,6 +3,7 @@ from freighter.colors import *
 from freighter.console import *
 from freighter.doltools import *
 from geckolibs.geckocode import GeckoCommand, Write16, Write32, WriteBranch, WriteString
+from dataclasses import dataclass
 
 SupportedGeckoCodetypes = [
     GeckoCommand.Type.WRITE_8,
@@ -16,15 +17,22 @@ SupportedGeckoCodetypes = [
 ]
 
 
-class Hook(object):
-    def __init__(self, address: int | str):
+@dataclass
+class Hook:
+    address: int
+    source_file: str
+    line_number: int
+    good: bool = False
+    data: int = 0
+   
+
+    def __init__(self, address: int | str, source_file: str= "", line_number: int = 0):
         if isinstance(address, str):
             address = int(address, 16)
-        self.good = False
         self.address = address
-        self.data = 0
-        self.symbol_name = ""
-        
+        self.source_file = source_file
+        self.line_number = line_number
+
     def resolve(self, symbols):
         return
 
@@ -40,10 +48,8 @@ class Hook(object):
 
 
 class BranchHook(Hook):
-    def __init__(self, address, symbol_name,source_file,line_number, lk_bit=False):
-        Hook.__init__(self, address)
-        self.source_file = source_file
-        self.line_number = line_number
+    def __init__(self, address, symbol_name, source_file, line_number, lk_bit=False):
+        Hook.__init__(self, address, source_file, line_number)
         self.symbol_name = symbol_name
         self.lk_bit = lk_bit
 
@@ -167,6 +173,17 @@ class FileHook(Hook):
         return f'[File] 0x{self.address:x} -> "{self.filepath}"'
 
 
+class NOPHook(Hook):
+
+    def apply_dol(self, dol: DolFile):
+        if dol.is_mapped(self.address):
+            dol.write_uint32(self.address, 0x60000000)
+            self.good = True
+
+    def __repr__(self):
+        return f"✋ {PURPLE}NOPHook 0x{self.address:x} -> nop"
+
+
 class Immediate16Hook(Hook):
     def __init__(self, address, symbol_name, modifier):
         Hook.__init__(self, address)
@@ -281,5 +298,4 @@ class Immediate12Hook(Hook):
             self.good = True
 
     def __repr__(self):
-        return f'[Immediate12] 0x{self.address:x} {self.symbol_name} {self.modifier}'
-     
+        return f"[Immediate12] 0x{self.address:x} {self.symbol_name} {self.modifier}"

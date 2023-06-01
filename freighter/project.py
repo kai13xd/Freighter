@@ -7,7 +7,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import cache
 from os import makedirs
 from time import time
-from typing import Iterator,DefaultDict
+from typing import Iterator, DefaultDict
 
 from dolreader.dol import DolFile
 from dolreader.section import DataSection, Section, TextSection
@@ -30,9 +30,7 @@ def strip_comments(line: str):
 
 
 class FreighterProject:
-
     def __init__(self, user_environment: UserEnvironment, project_config: ProjectConfig):
-        
         self.project_name = project_config.ProjectName
         self.user_environment = user_environment
         self.file_manager = FileManager(project_config)
@@ -73,7 +71,7 @@ class FreighterProject:
             for address, string in self.profile.StringHooks.items():
                 self.hooks.append(StringHook(address, string))
         filepath = self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".o")
-        self.final_object_file = ObjectFile(self.file_manager,filepath)
+        self.final_object_file = ObjectFile(self.file_manager, filepath)
         self.gecko_table = GeckoCodeTable(self.profile.GameID, self.project_name)
 
     def build(self) -> None:
@@ -180,7 +178,7 @@ class FreighterProject:
             for file in folder.find_files(".c", ".cpp", recursive=True):
                 if file in self.profile.IgnoredSourceFiles:
                     continue
-                source_file = SourceFile(self.file_manager,file)
+                source_file = SourceFile(self.file_manager, file)
                 self.source_files.append(source_file)
                 self.object_files.append(source_file.object_file)
 
@@ -191,8 +189,8 @@ class FreighterProject:
             if source_file.needs_recompile():
                 source_file.object_file.is_dirty = True
                 compile_list.append(source_file)
-        
-        if compile_list:  
+
+        if compile_list:
             failed_compilations = list[tuple[SourceFile, str]]()
             successful_compilations = list[SourceFile]()
             with ProcessPoolExecutor() as executor:
@@ -214,6 +212,7 @@ class FreighterProject:
                 bad_source_files = ""
                 for source_file, error in failed_compilations:
                     import re
+
                     ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", re.VERBOSE)
                     errorstr = ansi_escape.sub("", error)
                     errorlines = errorstr.split("\n")
@@ -222,7 +221,7 @@ class FreighterProject:
                     Console.print(f'{header}{ORANGE}{AnsiAttribute.BOLD}Compile Errors{AnsiAttribute.RESET}: "{source_file}"\n{header}{error}')
                     bad_source_files += str(source_file) + "\n"
                 raise FreighterException(f"{ORANGE}Build process halted. Please fix code errors for the following files:\n{CYAN}" + bad_source_files)
-            
+
             for source_file in successful_compilations:
                 if source_file.object_file.is_hash_same():
                     Console.print(f'"{source_file}" resulted in the same binary.')
@@ -234,10 +233,8 @@ class FreighterProject:
         else:
             Console.print("No source files have been modified.")
             self.symbols.update(self.final_object_file.restore_previous_state().symbols)
-        
+
         self.compile_time = time() - compile_start_time
-            
-        
 
     def compile_task(self, source_file: SourceFile, output: ObjectFile) -> tuple[int, SourceFile, str, str]:
         args = []
@@ -298,7 +295,7 @@ class FreighterProject:
     def load_symbol_definitions(self):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
         Console.print(f"{ORANGE}Loading manually defined symbols...")
-        for file in self.profile.SymbolsFolder.find_files(".txt",recursive=True):
+        for file in self.profile.SymbolsFolder.find_files(".txt", recursive=True):
             with open(file.as_posix(), "r") as f:
                 lines = f.readlines()
 
@@ -333,19 +330,19 @@ class FreighterProject:
                 line = line.removeprefix("#pragma ")
                 if line.startswith("hook"):
                     branch_type, *addresses = line.removeprefix("hook ").split(" ")
-                    line_number, lines, function_symbol = self.get_function_symbol(source_file,lines, is_c_linkage)
+                    line_number, lines, function_symbol = self.get_function_symbol(source_file, lines, is_c_linkage)
                     if branch_type == "bl":
                         for address in addresses:
-                            self.hooks.append(BranchHook(address, function_symbol,source_file.filepath,line_number, True))
+                            self.hooks.append(BranchHook(address, function_symbol, source_file.filepath, line_number, True))
                     elif branch_type == "b":
                         for address in addresses:
-                            self.hooks.append(BranchHook(address, function_symbol,source_file.filepath,line_number))
+                            self.hooks.append(BranchHook(address, function_symbol, source_file.filepath, line_number))
                     else:
                         raise FreighterException(f"{branch_type} is not a valid supported branch type for #pragma hook!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
                 elif line.startswith("inject"):
                     inject_type, *addresses = line.removeprefix("inject ").split(" ")
                     if inject_type == "pointer":
-                        line_number, lines, function_symbol = self.get_function_symbol(source_file,lines, is_c_linkage)
+                        line_number, lines, function_symbol = self.get_function_symbol(source_file, lines, is_c_linkage)
                         for address in addresses:
                             self.hooks.append(PointerHook(address, function_symbol))
                     elif inject_type == "string":
@@ -354,37 +351,39 @@ class FreighterProject:
                             self.hooks.append(StringHook(address, inject_string))
                     else:
                         raise FreighterException(f"Arguments for {PURPLE}{line}{CYAN} are incorrect!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
-        
-        # May help fix stupid mistakes  
+                elif line.startswith("nop"):
+                    addresses = line.removeprefix("nop ").split(" ")
+                    for address in addresses:
+                        self.hooks.append(NOPHook(address, source_file.filepath, line_number))
+        # May help fix stupid mistakes
         unique_addresses = {}
-        duplicates = defaultdict[int,list[BranchHook]](list[BranchHook])
-        for hook in [x for x in self.hooks if isinstance(x,BranchHook)]:
+        duplicates = defaultdict[int, list[BranchHook]](list[BranchHook])
+        for hook in [x for x in self.hooks if isinstance(x, BranchHook)]:
             if hook.address not in unique_addresses.keys():
                 unique_addresses[hook.address] = hook
             else:
                 duplicates[hook.address].append(hook)
                 if unique_addresses[hook.address] not in duplicates[hook.address]:
                     duplicates[hook.address].append(unique_addresses[hook.address])
-        
+
         if duplicates:
-            bad_hooks_string= ""
+            bad_hooks_string = ""
             for address, hooks in duplicates.items():
                 bad_hooks_string += f"{hex(address)}\n"
                 for hook in hooks:
                     bad_hooks_string += f'\t{hook.symbol_name} in "{hook.source_file}:{hook.line_number}"\n'
             raise FreighterException(f"BranchHooks referencing different functions were found hooking into the same address!\n{bad_hooks_string}")
-            
 
-    re_function_name:Pattern[str] = re.compile(r".* (\w*(?=\()).*")
-    re_parameter_names:Pattern[str] = re.compile(r'([^\]&*]\w+)(,|(\)\[)|(\)\()|\))')
-    re_flip_const:Pattern[str] = re.compile(r"(const) ([:\[\]<>\w]*[^ *&])")
-    re_flip_volatile:Pattern[str] = re.compile(r"(volatile) ([:\[\]<>\w]*[^ *&])")
-    re_flip_const_volatile:Pattern[str] = re.compile(r"(const volatile) ([:\[\]<>\w]*[^ *&])")
-    
-    def get_function_symbol(self,source_file:SourceFile, lines: Iterator[tuple[ int, str]], is_c_linkage: bool = False) -> tuple[int, Iterator[tuple[int, str]], str]:
+    re_function_name: Pattern[str] = re.compile(r".* (\w*(?=\()).*")
+    re_parameter_names: Pattern[str] = re.compile(r"([^\]&*]\w+)(,|(\)\[)|(\)\()|\))")
+    re_flip_const: Pattern[str] = re.compile(r"(const) ([:\[\]<>\w]*[^ *&])")
+    re_flip_volatile: Pattern[str] = re.compile(r"(volatile) ([:\[\]<>\w]*[^ *&])")
+    re_flip_const_volatile: Pattern[str] = re.compile(r"(const volatile) ([:\[\]<>\w]*[^ *&])")
+
+    def get_function_symbol(self, source_file: SourceFile, lines: Iterator[tuple[int, str]], is_c_linkage: bool = False) -> tuple[int, Iterator[tuple[int, str]], str]:
         """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
         """Also doesn't account for namespaces that arent in the function signature"""
-      
+
         while True:
             line_number, line = next(lines)
             if 'extern "C"' in line:
@@ -393,23 +392,23 @@ class FreighterProject:
                 continue
             if "(" in line:
                 line = strip_comments(line)
-                line = line.rsplit('{')[0]
+                line = line.rsplit("{")[0]
                 if is_c_linkage:
-                    return line_number, lines, self.re_function_name.sub(r"\1",line,1)
+                    return line_number, lines, self.re_function_name.sub(r"\1", line, 1)
                 try:
-                    result :list[str]= re.findall(r"(.*)(\(.*\))",line)[0]
+                    result: list[str] = re.findall(r"(.*)(\(.*\))", line)[0]
                     function_name, signature = result
                     namespace_parts = function_name.split("::")
                     if len(namespace_parts) > 1 and namespace_parts[-1] == namespace_parts[-2]:
                         Console.print(f"'{line}' is a constructor")
                     else:
-                        function_name = function_name.rsplit(" ",-1)[-1]
+                        function_name = function_name.rsplit(" ", -1)[-1]
                 except:
-                    raise BadFunctionSignatureExecption(source_file,line_number, line)
-                if signature == '()':
+                    raise BadFunctionSignatureExecption(source_file, line_number, line)
+                if signature == "()":
                     return line_number, lines, function_name + signature
-                signature = self.re_parameter_names.sub(r'\2',signature)
-                
+                signature = self.re_parameter_names.sub(r"\2", signature)
+
                 if "const " in signature or "volatile " in signature:
                     parameters = signature.split(",")
                     parameters[0] = parameters[0][1:]
@@ -420,18 +419,18 @@ class FreighterProject:
                         if "volatile const" in parameter:
                             parameter = parameter.replace("volatile const", "const volatile")
                         if "const volatile" in parameter:
-                            parameter = self.re_flip_const_volatile.sub(r"\2 \1",parameter)
+                            parameter = self.re_flip_const_volatile.sub(r"\2 \1", parameter)
                         elif "volatile" in parameter:
-                            parameter = self.re_flip_volatile.sub(r"\2 \1",parameter)
+                            parameter = self.re_flip_volatile.sub(r"\2 \1", parameter)
                         else:
                             # c++filt returns demangled symbols with 'type const*' or 'type const&' rather than 'const type*' or 'const type&'
-                            parameter = self.re_flip_const.sub(r"\2 \1",parameter)  
+                            parameter = self.re_flip_const.sub(r"\2 \1", parameter)
                         # Passing types by value is implicitly const. c++filt returns a demangled symbol with const removed
-                        if parameter[-1] not in ["*","&"]:
-                            parameter = parameter.replace('const',"").replace("volatile","").rstrip()                        
+                        if parameter[-1] not in ["*", "&"]:
+                            parameter = parameter.replace("const", "").replace("volatile", "").rstrip()
                         result.append(parameter)
                     signature = f"({', '.join(result)})"
-                
+
                 return line_number, lines, function_name + signature
 
     def analyze_final(self):
@@ -474,12 +473,12 @@ class FreighterProject:
             write_section(".text")
             write_section(".rodata")
             write_section(".data")
-            write_section(".bss")  
+            write_section(".bss")
             write_section(".sdata")
             write_section(".sbss")
             write_section(".sdata2")
             write_section(".sbss2")
-           
+
             f.write("\t/DISCARD/ :\n\t{\n")
             for section in self.profile.DiscardSections:
                 f.write(f"\t\t*({section}*);\n")
@@ -506,8 +505,7 @@ class FreighterProject:
                 "\t.text ALIGN(0x20):\n\t{\n\t\t*(.text*)\n\t}\n"
                 "}"
             )
-           
-      
+
         self.profile.LinkerScripts.append(linkerscript_file)
 
     def link(self):
@@ -525,13 +523,12 @@ class FreighterProject:
         Console.print(f"{PURPLE}{args}", PrintType.VERBOSE)
         process = subprocess.Popen(args, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = process.communicate()
-        
-        
+
         if process.returncode:
             re_quote = re.compile(r"(`)")
             re_parens = re.compile(r"(\(.*\))")
-            error = re_quote.sub("'",err.decode())
-            error = re_parens.sub(rf'{MAGENTA}\n\t({PURPLE}\1{MAGENTA}){AnsiAttribute.RESET}\n',error)
+            error = re_quote.sub("'", err.decode())
+            error = re_parens.sub(rf"{MAGENTA}\n\t({PURPLE}\1{MAGENTA}){AnsiAttribute.RESET}\n", error)
             Console.print(error)
             raise FreighterException(f'{ERROR} failed to link object files"\n')
         else:
