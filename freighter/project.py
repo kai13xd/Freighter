@@ -105,6 +105,8 @@ class FreighterProject:
         Console.print(f'\n{GREEN}🎊 Build Complete! 🎊\nSaved final binary to "{self.profile.OutputDolFile}"!')
         self.print_extras()
         self.final_object_file.calculate_hash()
+        self.projectfile_builder = ProjectFileBuilder()
+        self.projectfile_builder.build(self.file_manager)
         self.file_manager.save_state()
 
     def cleanup(self):

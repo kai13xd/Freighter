@@ -10,6 +10,7 @@ from freighter.path import Path, DirectoryPath, FilePath
 from freighter.arguments import Arguments
 from freighter.toml import *
 from freighter.numerics import UInt
+
 import tkinter.filedialog
 
 PLATFORM = system()
@@ -58,6 +59,7 @@ class UserEnvironment(TOMLConfig):
     CPPFLIT: FilePath
     DolphinUserPath: DirectoryPath
     DolphinMaps: DirectoryPath
+    SuperBMDPath: FilePath
 
     def __init__(self) -> None:
         if not USERENVIRONMENT_PATH.exists():
@@ -298,3 +300,48 @@ class ProjectConfig(TOMLConfig):
         profiles = dict[str, Profile]()
         profiles["Debug"] = Profile.default
         return cls(project_name, Banner(), profiles)
+
+
+import subprocess
+
+
+@dataclass
+class BMDModel(TOMLObject):
+    Input: FilePath
+    Output: FilePath
+    MaterialJSON: FilePath
+    Tristrip: str = "all"
+    Rotate: bool = True
+
+
+@dataclass
+class ProjectFileBuilder(TOMLConfig):
+    ToolPath: FilePath = FilePath("D:/Pikmin1Remake/tools/SuperBMD/SuperBMD.exe")
+    BMDModels: dict[str, BMDModel] = field(default_factory=dict[str, BMDModel])
+
+    def __init__(self):
+        self.load(FilePath("ProjectFiles.toml"))
+
+    def build(self, file_manager):
+        from freighter.filelist import File
+
+        for name, model in self.BMDModels.items():
+            model.Input.assert_exists()
+
+            input_model_file = File(file_manager, model.Input)
+            if input_model_file.is_hash_same():
+                Console.print(f'[{name}] "{model.Input}" is not modified. Skipping...')
+                continue
+            Console.print(f"[{name}] Building BMD model...")
+            args: list[str | PathLike] = [self.ToolPath.absolute(), model.Input.absolute(), model.Output.absolute()]
+
+            model.Output.assert_exists()
+            if model.MaterialJSON:
+                model.MaterialJSON.assert_exists()
+                args += ["--mat", model.MaterialJSON.absolute()]
+            if model.Rotate:
+                args.append("--rotate")
+            if model.Tristrip:
+                args += ["--tristrip", model.Tristrip]
+
+            subprocess.Popen(args, shell=True, stderr=subprocess.PIPE, stdin=subprocess.PIPE)

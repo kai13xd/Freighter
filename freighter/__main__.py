@@ -21,6 +21,7 @@ def timeit(func):
 
     return timeit_wrapper
 
+
 # @timeit
 # def test1():
 #     texture = GameCubeTexture("test.png")

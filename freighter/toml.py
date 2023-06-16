@@ -140,14 +140,14 @@ class TOMLConfig:
         with open(path, "rb") as f:
             toml_config = tomllib.load(f)
 
-        self.dataclass_typedict = dict[str, type]()
+        dataclass_typedict = dict[str, type]()
 
         for i, field in enumerate(self.__dataclass_fields__.values()):
             class_type = field.type
             name = field.type.__name__
             arg_count = len(inspect.signature(field.type.__init__).parameters) - 1
             Console.print(f"Field {i} {field.name}:\n\tType:{name}\n\t__init__ Expects {arg_count} args", PrintType.DEBUG)
-            self.dataclass_typedict[field.name] = field.type
+            dataclass_typedict[field.name] = field.type
 
         for i, kv in enumerate(toml_config.items()):
             toml_key, toml_value = kv
@@ -156,9 +156,9 @@ class TOMLConfig:
         Console.print(f"TOMLConfig ({self.__class__.__name__})", PrintType.DEBUG)
         try:
             for keyword, attribute_dict in toml_config.items():
-                class_type = self.dataclass_typedict[keyword]
+                class_type = dataclass_typedict[keyword]
                 result_object = self.parse_dataclass_field(class_type, attribute_dict)
-                Console.print(f"Parsed {keyword} of type {self.dataclass_typedict[keyword].__name__}", PrintType.DEBUG)
+                Console.print(f"Parsed {keyword} of type {dataclass_typedict[keyword].__name__}", PrintType.DEBUG)
                 self.__setattr__(keyword, result_object)
 
             Console.print(f'Loaded "{path.stem}.toml" from "{path.parent}".', PrintType.VERBOSE)
