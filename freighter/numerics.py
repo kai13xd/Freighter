@@ -31,14 +31,17 @@ class Number(int):
         return bin(self)
 
     def __repr__(self) -> str:
-        return str(self)
+        return f"{str(int(self))} = {self.hex}"
+
+    def __str__(self) -> str:
+        return str(int(self))
 
 
 class Char(Number):
     _min: int = -128
     _max: int = 127
 
-    def __init__(self, value: int | Number = 0):
+    def __init__(self, value: int | Number):
         Number.__init__(self, value)
 
 
@@ -46,7 +49,7 @@ class Int(Number):
     _min: int = -2147483646
     _max: int = 2147483647
 
-    def __init__(self, value: int | Number = 0):
+    def __init__(self, value: int | Number):
         Number.__init__(self, value)
 
 
@@ -54,5 +57,5 @@ class UInt(Number):
     _min: int = 0
     _max: int = 4294967295
 
-    def __init__(self, value: int | Number = 0):
+    def __init__(self, value: int | Number):
         Number.__init__(self, value)

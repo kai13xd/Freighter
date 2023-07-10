@@ -44,6 +44,8 @@ Defaults to first profile in the config if no arguments are passed.
 -debug : Print debug and verbose information to the console
 
 -reset : Reconfigures your UserEnvironment.toml
+
+-appdata : Reveals the Freighter AppData folder
 ```
 
 
@@ -55,7 +57,8 @@ You can generate a new project by using `freighter new ProjectName`
 ## ProjectConfig.toml
 
 ```toml
-ProjectName = "MyProject"
+TargetArchitecture = "PowerPC"
+ProjectName = "MyGameCubeProject"
 [BannerConfig]
 BannerImage = "banner.png"
 Title = "GameTitle"
@@ -67,30 +70,30 @@ OutputPath = "build/files/opening.bnr"
 
 
 [Profiles.Debug]
+InjectionAddress = 0x0 # The address where custom code and data will be injected into the .dol
+IncludeFolders = ["includes"]
+SourceFolders = ["source"]
 GameID = "FREI01"
-InjectionAddress = 0x0
 InputDolFile = "main.dol"
 OutputDolFile = "build/sys/main.dol"
-IncludeFolders = ["source"]
-SourceFolders = ["includes"]
 SDA = 0x0
 SDA2 = 0x0
 GeckoFolder = "gecko"
+InputSymbolMap = "GPVE01.map"
+OutputSymbolMapPaths = []
+IgnoredGeckoFiles = []
+TemporaryFilesFolder = "temp"
 SymbolsFolder = "symbols"
 LinkerScripts = []
-TemporaryFilesFolder = "temp"
-InputSymbolMap = ""
-OutputSymbolMapPaths = []
-StringHooks = {}
 IgnoredSourceFiles = []
-IgnoredGeckoFiles = []
 IgnoreHooks = []
 DiscardLibraryObjects = []
 DiscardSections = []
-CompilerArgs = []
-GCCArgs = []
-GPPArgs = []
-LDArgs = []
+StringHooks = {}
+CompilerArgs = [] # Compiler args that apply both gcc or g++ args here
+GCCArgs = [] # Put C related compiler args here
+GPPArgs = [] # Put C++ related compiler args here
+LDArgs = [] # Linker args go here
 
 
 ```

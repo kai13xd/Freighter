@@ -209,9 +209,9 @@ class FileManager:
                 self.previous_state = jsonpickle.loads(f.read())
         else:
             self.previous_state=dict[str, File]()
-        self.project_config = File(self,project_config.config_path)
-        self.include_folders = project_config.selected_profile.IncludeFolders
-        self.temp_folder = project_config.selected_profile.TemporaryFilesFolder     
+        self.project_config = File(self,project_config.ConfigPath)
+        self.include_folders = project_config.SelectedProfile.IncludeFolders
+        self.temp_folder = project_config.SelectedProfile.TemporaryFilesFolder     
         
 
   

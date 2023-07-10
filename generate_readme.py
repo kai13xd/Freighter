@@ -1,5 +1,5 @@
 from freighter.arguments import Arguments
-from freighter.config import ProjectConfig
+from freighter.config import *
 
 options = ""
 for name, option in Arguments.parser._option_string_actions.items():
@@ -48,7 +48,7 @@ You can generate a new project by using `freighter new ProjectName`
 ## ProjectConfig.toml
 
 ```toml
-{ProjectConfig.default("MyProject")}
+{GameCubeProjectConfig.default}
 ```
 
 # Credits

@@ -39,25 +39,26 @@ class Console:
     @staticmethod
     def print(obj: Any, type=PrintType.NORMAL) -> None:
         from freighter.arguments import Arguments
+
         if type is PrintType.VERBOSE and not Arguments.verbose:
             return
         elif type is PrintType.DEBUG and not Arguments.debug:
             return
-        
+
         string = str(obj)
         string = Console.re_string.sub(Console.re_replace_string, string)
         string = Console.re_string2.sub(Console.re_replace_string2, string)
         string = Console.re_hex.sub(Console.re_replace_hex, string)
-        
+
         if type == PrintType.NORMAL:
-            print(string)
+            print(f"{string}{AnsiAttribute.RESET}")
         elif type == PrintType.INFO:
-            print(Console.info + string)
+            print(f"{Console.info + string}{AnsiAttribute.RESET}")
         elif type == PrintType.ERROR:
-            print(Console.error + string)
+            print(f"{Console.error + string}{AnsiAttribute.RESET}")
         elif type == PrintType.WARN:
-            print(Console.warn + string)
+            print(f"{Console.warn + string}{AnsiAttribute.RESET}")
         elif type == PrintType.VERBOSE:
-            print(Console.verbose + string)
+            print(f"{Console.verbose + string}{AnsiAttribute.RESET}")
         elif type == PrintType.DEBUG:
-            print(Console.debug + string)
+            print(f"{Console.debug + string}{AnsiAttribute.RESET}")

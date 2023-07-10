@@ -1,7 +1,6 @@
 from argparse import ONE_OR_MORE, Action, ArgumentParser, RawTextHelpFormatter, _ArgumentGroup
 from collections.abc import Iterable
-from dataclasses import dataclass
-
+from attrs import define
 from freighter.path import DirectoryPath
 from freighter.version import __version__
 from freighter.colors import *
@@ -51,36 +50,28 @@ class FreighterHelpFormatter(RawTextHelpFormatter):
 
 
 class Arguments:
-    class NewArg:
-        project_name: str
-        project_path: DirectoryPath
 
-        def __init__(self, args: list[str]):
-            self.project_name = args[0]
-            if len(args) == 1:
-                self.project_path = DirectoryPath.cwd
-            else:
-                self.project_path = DirectoryPath(args[1])
 
-    @dataclass
+    @define
     class BuildArg:
         project_name: str
         profile_name: str = ""
 
-    new: NewArg | None = None
+    new: bool = False
     build: BuildArg | None = None
     importarg: DirectoryPath | None = None
     clean: bool = False
     reset: bool = False
     verbose: bool = False
     debug:bool = False
+    appdata:bool = False
     parser = ArgumentParser(description=DESCRIPTION, epilog=EPILOG, add_help=False, prefix_chars="-", formatter_class=FreighterHelpFormatter)
 
     @classmethod
     def parse_args(cls) -> None:
         cls.parser.add_argument("-help", action="store_true", help="Shows the help prompt.")
 
-        cls.parser.add_argument("-new", metavar="<Project Name> [Path]", nargs=ONE_OR_MORE, help="Generates a new project at the current working directory with the specified project name.")
+        cls.parser.add_argument("-new", action="store_true", help="Generates a new project.")
 
         cls.parser.add_argument(
             "-build",
@@ -95,7 +86,7 @@ class Arguments:
         cls.parser.add_argument("-verbose", action="store_true", help="Print verbose information to the console")
         cls.parser.add_argument("-debug", action="store_true", help="Print debug and verbose information to the console")
         cls.parser.add_argument("-reset", action="store_true", help="Reconfigures your UserEnvironment.toml")
-
+        cls.parser.add_argument("-appdata", action="store_true",help="Reveals the Freighter AppData folder")
         parsed_args = cls.parser.parse_args()
 
         cls.help = parsed_args.help
@@ -103,15 +94,14 @@ class Arguments:
         if parsed_args.build:
             cls.build = cls.BuildArg(*parsed_args.build)
 
-        if parsed_args.new:
-            cls.new = cls.NewArg(parsed_args.new)
-
+        cls.new = parsed_args.new
         cls.importarg = parsed_args.importarg
 
         cls.clean = parsed_args.clean
         cls.verbose = parsed_args.verbose
         cls.debug = parsed_args.debug
         cls.reset = parsed_args.reset
+        cls.appdata = parsed_args.appdata
 
     @classmethod
     def print_help(cls):

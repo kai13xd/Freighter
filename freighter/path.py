@@ -9,6 +9,7 @@ from os import PathLike
 from freighter.colors import *
 from freighter.console import Console, PrintType
 from freighter.exceptions import FreighterException
+import subprocess
 
 
 class Path(PureWindowsPath):
@@ -59,6 +60,16 @@ class Path(PureWindowsPath):
     @cached_property
     def parent(self):
         return DirectoryPath(super().parent)
+
+    @cached_property
+    def windows_path(self):
+        return str(self).replace("/", "\\")
+
+    def reveal(self):
+        if isinstance(self, FilePath):
+            subprocess.run(["explorer.exe", "/select", self.absolute().windows_path])
+        elif isinstance(self, DirectoryPath):
+            subprocess.run(["explorer.exe", self.absolute().windows_path])
 
     def resolve(self, strict=False):
         from errno import EBADF, ELOOP, ENOENT, ENOTDIR
@@ -120,14 +131,16 @@ class DirectoryPath(Path):
             return
         if not ask_confirm or input(f'Confirm deletion of directory "{self}"?\nType "yes" to confirm:\n') == "yes":
             rmtree(self)
-        
 
     def find_files(self, *extensions: str, recursive=False):
         globbed = list[str]()
         if extensions:
             for extension in extensions:
                 globstr = f"{self}/**/*{extension}"
-                globbed += glob(globstr, recursive=recursive,)
+                globbed += glob(
+                    globstr,
+                    recursive=recursive,
+                )
         else:
             globbed = glob(f"{self}/*", recursive=recursive)
         result = list[FilePath]()
@@ -160,7 +173,6 @@ class DirectoryPath(Path):
 
 
 class FilePath(Path):
-    
     def exists(self) -> bool:
         if isfile(self):
             Console.print(f'{ORANGE}File Found "{self}"!', PrintType.VERBOSE)
@@ -174,7 +186,6 @@ class FilePath(Path):
             return
         if not ask_confirm or input(f'Confirm deletion of file "{self}"?\nType "yes" to confirm:\n') == "yes":
             remove(self)
-        
 
     def assert_exists(self):
         if self.exists():

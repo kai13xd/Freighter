@@ -31,17 +31,13 @@ def strip_comments(line: str):
 
 class FreighterProject:
     def __init__(self, user_environment: UserEnvironment, project_config: ProjectConfig):
-        self.project_name = project_config.ProjectName
         self.user_environment = user_environment
-        self.file_manager = FileManager(project_config)
-        self.profile: Profile = project_config.selected_profile  # Allows multiprocessing processes to have context
-        self.banner_config = project_config.BannerConfig
-        self.compiler_args = project_config.selected_profile.CompilerArgs
-        self.ld_args = project_config.selected_profile.LDArgs
-        self.bin_data: bytearray
+        self.project_name = project_config.ProjectName
+        self.binutils = user_environment.BinUtilsPaths[project_config.TargetArchitecture]
+        self.compiler_args = project_config.SelectedProfile.CompilerArgs
+        self.ld_args = project_config.SelectedProfile.LDArgs
         self.library_folders: str
         self.symbols = defaultdict(Symbol)
-        self.gecko_meta = []
         self.source_files = list[SourceFile]()
         # self.asm_files = list[SourceFile]()
         self.object_files = list[ObjectFile]()
@@ -49,131 +45,25 @@ class FreighterProject:
         self.hooks = list[Hook]()
         self.compile_time = 0
         self.demangler_process = None
-
-        self.dol = DolFile(open(self.profile.InputDolFile, "rb"))
-        # if not self.profile.InjectionAddress:
-        # self.profile.InjectionAddress = self.dol.lastSection.address + self.dol.lastSection.size
-        # Console.print(f"{WHITE}Base address auto-set from end of Read-Only Memory: {Cyan}{self.profile.InjectionAddress:x}\n{WHITE}Do not rely on this if your DOL uses .sbss2\n")
-
-        if self.profile.InjectionAddress % 32:
-            Console.print("Warning! DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
-
-        if self.profile.SDA and self.profile.SDA2:
-            self.compiler_args += ["-msdata=eabi"]
-            self.ld_args += [
-                f"--defsym=_SDA_BASE_={hex(self.profile.SDA)}",
-                f"--defsym=_SDA2_BASE_={hex(self.profile.SDA2)}",
-            ]
-
-        if self.profile.InputSymbolMap:
-            self.profile.OutputSymbolMapPaths.append(self.user_environment.DolphinMaps.create_filepath(self.profile.GameID + ".map"))
-        if self.profile.StringHooks:
-            for address, string in self.profile.StringHooks.items():
-                self.hooks.append(StringHook(address, string))
+        self.file_manager = FileManager(project_config)
+        self.profile: GameCubeProfile | SwitchProfile = project_config.SelectedProfile
         filepath = self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".o")
         self.final_object_file = ObjectFile(self.file_manager, filepath)
-        self.gecko_table = GeckoCodeTable(self.profile.GameID, self.project_name)
-
-    def build(self) -> None:
-        build_start_time = time()
-        if not self.profile.TemporaryFilesFolder.exists():
-            self.profile.TemporaryFilesFolder.create()
-        self.get_source_files()
-        start = time()
-        self.process_pragmas()
-        print(f"Processed pragmas in {time()-start} seconds")
-        self.compile()
-        self.load_symbol_definitions()
-        self.generate_linkerscript()
-        self.link()
-        self.bin_path = self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".bin")
-        self.process_project()
-        self.bin_data = bytearray(open(self.bin_path, "rb").read())
-        self.analyze_final()
-        self.save_symbol_map()
-
-        Console.print(f"{ORANGE}Begin Patching...")
-        self.apply_gecko()
-        self.apply_hooks()
-        self.patch_osarena_low(self.dol, self.profile.InjectionAddress + len(self.bin_data))
-        with open(self.profile.OutputDolFile, "wb") as f:
-            self.dol.save(f)
-
-        self.create_banner()
-
-        self.build_time = time() - build_start_time
-        Console.print(f'\n{GREEN}🎊 Build Complete! 🎊\nSaved final binary to "{self.profile.OutputDolFile}"!')
-        self.print_extras()
-        self.final_object_file.calculate_hash()
-        self.projectfile_builder = ProjectFileBuilder()
-        self.projectfile_builder.build(self.file_manager)
-        self.file_manager.save_state()
 
     def cleanup(self):
         Console.print(f'{CYAN}Cleaning up temporary files at "{self.profile.TemporaryFilesFolder}"')
         self.profile.TemporaryFilesFolder.delete()
         Console.print("Removed temporary files.")
 
-    def create_banner(self) -> None:
-        if self.banner_config:
-            Console.print("Generating game banner...")
+    def build(self):
+        build_start_time = time()
+        if not self.profile.TemporaryFilesFolder.exists():
+            self.profile.TemporaryFilesFolder.create()
+        self.get_source_files()
+        self.process_pragmas()
+        self.compile()
 
-            texture = GameCubeTexture(self.banner_config.BannerImage)
-            banner = BNR()
-            banner.banner_image.data = texture.encode(ImageFormat.RGB5A3)
-            banner.description.data = self.banner_config.Description
-            banner.title.data = self.banner_config.Title
-            banner.gamename.data = self.banner_config.GameName
-            banner.maker.data = self.banner_config.Maker
-            banner.short_maker.data = self.banner_config.ShortMaker
-            banner.save(self.banner_config.OutputPath)
-            Console.print(f'Banner saved to "{self.banner_config.OutputPath}"')
-
-    def print_extras(self) -> None:
-        with open(self.profile.OutputDolFile, "rb") as f:
-            md5 = hashlib.file_digest(f, "md5").hexdigest()
-            sha_256 = hashlib.file_digest(f, "sha256").hexdigest()
-            sha_512 = hashlib.file_digest(f, "sha512").hexdigest()
-            Console.print(f"{GREEN}MD5: {CYAN}{md5}\n{GREEN}SHA-256: {CYAN}{sha_256}\n{GREEN}SHA-512: {CYAN}{sha_512}")
-
-        symbols = list[Symbol]()
-        for symbol in self.symbols.values():
-            symbols.append(symbol)
-        symbols = list(set(symbols))
-        symbols.sort(key=lambda x: x.size, reverse=True)
-        symbols = symbols[:10]
-        Console.print(f"\nTop biggest symbols:")
-        for symbol in symbols:
-            Console.print(f'{GREEN}{symbol}{CYAN} in "{ORANGE}{symbol.source_file}{CYAN}" {PURPLE}{symbol.size}{GREEN} bytes')
-
-        Console.print(f"\n{CYAN}Compilation Time: {PURPLE}{self.compile_time:.2f} {CYAN}seconds")
-        Console.print(f"{CYAN}Build Time {PURPLE}{self.build_time:.2f} {CYAN}seconds")
-
-    def dump_objdump(self, object_path: ObjectFile, *args: str | Path) -> FilePath:
-        """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
-        args = (self.user_environment.OBJDUMP, object_path) + args
-        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".s")
-
-        with open(outpath, "w") as f:
-            subprocess.call(args, stdout=f)
-        return outpath
-
-    def dump_nm(self, object_path: FilePath, *args: str | Path) -> FilePath:
-        """Dumps the output from DevKitPPC's powerpc-eabi-nm.exe to a .txt file"""
-        args = (self.user_environment.NM, object_path) + args
-        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".o.nm")
-        with open(outpath, "w") as f:
-            subprocess.call(args, stdout=f)
-        return outpath
-
-    def dump_readelf(self, object_path: ObjectFile, *args: str | Path) -> FilePath:
-        """Dumps the output from DevKitPPC's powerpc-eabi-readelf.exe to a .txt file"""
-        args = (self.user_environment.READELF, object_path) + args
-
-        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".o.readelf")
-        with open(outpath, "w") as f:
-            subprocess.call(args, stdout=f)
-        return outpath
+        self.build_time = time() - build_start_time
 
     def get_source_files(self) -> None:
         for folder in self.profile.SourceFolders:
@@ -183,6 +73,19 @@ class FreighterProject:
                 source_file = SourceFile(self.file_manager, file)
                 self.source_files.append(source_file)
                 self.object_files.append(source_file.object_file)
+
+    @cache
+    def demangle(self, string: str) -> str:
+        if not self.demangler_process:
+            self.demangler_process = subprocess.Popen([self.binutils.CPPFLIT], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+
+        demangled = ""
+        if self.demangler_process.stdin and self.demangler_process.stdout:
+            self.demangler_process.stdin.write(f"{string}\n".encode())
+            self.demangler_process.stdin.flush()
+            demangled = self.demangler_process.stdout.readline().decode().rstrip()
+            Console.print(f" 🧼 {CYAN}{string}{PURPLE} -> {GREEN}{demangled}", PrintType.VERBOSE)
+        return demangled
 
     def compile(self) -> None:
         compile_start_time = time()
@@ -212,10 +115,8 @@ class FreighterProject:
                         successful_compilations.append(source_file)
             if failed_compilations:
                 bad_source_files = ""
+                ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", re.VERBOSE)
                 for source_file, error in failed_compilations:
-                    import re
-
-                    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", re.VERBOSE)
                     errorstr = ansi_escape.sub("", error)
                     errorlines = errorstr.split("\n")
                     length = max(len(line) for line in errorlines)
@@ -235,15 +136,14 @@ class FreighterProject:
         else:
             Console.print("No source files have been modified.")
             self.symbols.update(self.final_object_file.restore_previous_state().symbols)
-
         self.compile_time = time() - compile_start_time
 
     def compile_task(self, source_file: SourceFile, output: ObjectFile) -> tuple[int, SourceFile, str, str]:
         args = []
         if source_file.filepath.suffix == ".cpp":
-            args = [self.user_environment.GPP, "-c"] + self.profile.GPPArgs
+            args = [self.binutils.GPP, "-c"] + self.profile.GPPArgs
         else:
-            args = [self.user_environment.GCC, "-c"] + self.profile.GCCArgs
+            args = [self.binutils.GCC, "-c"] + self.profile.GCCArgs
         args += self.compiler_args
         for path in self.profile.IncludeFolders:
             args.append("-I" + str(path))
@@ -252,69 +152,6 @@ class FreighterProject:
         process = subprocess.Popen(args, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = process.communicate()
         return process.returncode, source_file, out.decode(), err.decode()
-
-    def find_undefined_symbols(self, object_file: ObjectFile):
-        nm_file = self.dump_nm(object_file)
-        Console.print(f'{ANALYZING} "{nm_file}"')
-        with open(nm_file, "r") as f:
-            for line in f:
-                type, symbol_name = line[8:].strip().split(" ")
-                symbol = self.symbols[symbol_name]
-                symbol.name = symbol_name
-                if symbol_name.startswith("_Z"):
-                    symbol.demangled_name = self.demangle(symbol_name)
-                    if "C1" in symbol_name:  # Because Itanium ABI likes emitting two constructors we need to differentiate them
-                        symbol.is_complete_constructor = True
-                    elif "C2" in symbol_name:
-                        symbol.is_base_constructor = True
-                    self.symbols[symbol.demangled_name] = symbol
-                    object_file.add_symbol(symbol)
-                else:
-                    symbol.is_c_linkage = True
-                    symbol.demangled_name = symbol_name
-                    object_file.add_symbol(symbol)
-                if type in ["u", "U", "b"]:
-                    continue
-                if type == "T":
-                    symbol.is_function = True
-                elif type == "v":
-                    symbol.is_weak = True
-                elif type == "B":
-                    symbol.is_bss = True
-                elif type == "d":
-                    symbol.is_data = True
-                elif type == "r":
-                    symbol.is_rodata = True
-                elif type == "a":
-                    symbol.is_absolute = True
-                symbol.is_undefined = False
-                if not symbol.source_file:
-                    if object_file.source_name == self.project_name:
-                        symbol.source_file = ""  # Temporary workaround for symbols sourced from external libs
-                    else:
-                        symbol.source_file = object_file.source_name
-
-    def load_symbol_definitions(self):
-        # Load symbols from a file. Supports recognizing demangled c++ symbols
-        Console.print(f"{ORANGE}Loading manually defined symbols...")
-        for file in self.profile.SymbolsFolder.find_files(".txt", recursive=True):
-            with open(file.as_posix(), "r") as f:
-                lines = f.readlines()
-
-            section = "." + file.stem
-            for line in lines:
-                line = line.rstrip().partition("//")[0]
-                if line:
-                    name, address = line.split(" = ")
-                    if name == "sys":
-                        pass
-                    if name in self.symbols:
-                        symbol = self.symbols[name]
-                        if symbol.source_file:  # skip this symbol because we are overriding it
-                            continue
-                        symbol.hex_address = address
-                        symbol.is_absolute = True
-                        symbol.section = section
 
     def process_pragmas(self):
         for source_file in self.source_files:
@@ -376,6 +213,47 @@ class FreighterProject:
                     bad_hooks_string += f'\t{hook.symbol_name} in "{hook.source_file}:{hook.line_number}"\n'
             raise FreighterException(f"BranchHooks referencing different functions were found hooking into the same address!\n{bad_hooks_string}")
 
+    def find_undefined_symbols(self, object_file: ObjectFile):
+        nm_file = self.dump_nm(object_file)
+        Console.print(f'{ANALYZING} "{nm_file}"')
+        with open(nm_file, "r") as f:
+            for line in f:
+                type, symbol_name = line[8:].strip().split(" ")
+                symbol = self.symbols[symbol_name]
+                symbol.name = symbol_name
+                if symbol_name.startswith("_Z"):
+                    symbol.demangled_name = self.demangle(symbol_name)
+                    if "C1" in symbol_name:  # Because Itanium ABI likes emitting two constructors we need to differentiate them
+                        symbol.is_complete_constructor = True
+                    elif "C2" in symbol_name:
+                        symbol.is_base_constructor = True
+                    self.symbols[symbol.demangled_name] = symbol
+                    object_file.add_symbol(symbol)
+                else:
+                    symbol.is_c_linkage = True
+                    symbol.demangled_name = symbol_name
+                    object_file.add_symbol(symbol)
+                if type in ["u", "U", "b"]:
+                    continue
+                if type == "T":
+                    symbol.is_function = True
+                elif type == "v":
+                    symbol.is_weak = True
+                elif type == "B":
+                    symbol.is_bss = True
+                elif type == "d":
+                    symbol.is_data = True
+                elif type == "r":
+                    symbol.is_rodata = True
+                elif type == "a":
+                    symbol.is_absolute = True
+                symbol.is_undefined = False
+                if not symbol.source_file:
+                    if object_file.source_name == self.project_name:
+                        symbol.source_file = ""  # Temporary workaround for symbols sourced from external libs
+                    else:
+                        symbol.source_file = object_file.source_name
+
     re_function_name: Pattern[str] = re.compile(r".* (\w*(?=\()).*")
     re_parameter_names: Pattern[str] = re.compile(r"([^\]&*]\w+)(,|(\)\[)|(\)\()|\))")
     re_flip_const: Pattern[str] = re.compile(r"(const) ([:\[\]<>\w]*[^ *&])")
@@ -434,6 +312,154 @@ class FreighterProject:
                     signature = f"({', '.join(result)})"
 
                 return line_number, lines, function_name + signature
+
+    def dump_objdump(self, object_path: ObjectFile, *args: str | Path) -> FilePath:
+        """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
+        args = (self.binutils.OBJDUMP, object_path) + args
+        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".s")
+
+        with open(outpath, "w") as f:
+            subprocess.call(args, stdout=f)
+        return outpath
+
+    def dump_nm(self, object_path: FilePath, *args: str | Path) -> FilePath:
+        """Dumps the output from DevKitPPC's powerpc-eabi-nm.exe to a .txt file"""
+        args = (self.binutils.NM, object_path) + args
+        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".o.nm")
+        with open(outpath, "w") as f:
+            subprocess.call(args, stdout=f)
+        return outpath
+
+    def dump_readelf(self, object_path: ObjectFile, *args: str | Path) -> FilePath:
+        """Dumps the output from DevKitPPC's powerpc-eabi-readelf.exe to a .txt file"""
+        args = (self.binutils.READELF, object_path) + args
+
+        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".o.readelf")
+        with open(outpath, "w") as f:
+            subprocess.call(args, stdout=f)
+        return outpath
+
+
+class FreighterSwitchProject(FreighterProject):
+    def __init__(self, user_environment: UserEnvironment, project_config: SwitchProjectConfig):
+        super().__init__(user_environment, project_config)
+
+    def build(self):
+        super().build()
+
+
+class FreighterGameCubeProject(FreighterProject):
+    def __init__(self, user_environment: UserEnvironment, project_config: GameCubeProjectConfig):
+        super().__init__(user_environment, project_config)
+
+        if isinstance(project_config.SelectedProfile, GameCubeProfile):
+            self.profile: GameCubeProfile = project_config.SelectedProfile
+        self.banner_config = project_config.BannerConfig
+        self.bin_data: bytearray
+        self.gecko_meta = []
+        self.dol = DolFile(open(self.profile.InputDolFile, "rb"))
+        if self.profile.InjectionAddress % 32:
+            Console.print("Warning! DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
+        if self.profile.SDA and self.profile.SDA2:
+            self.compiler_args += ["-msdata=eabi"]
+            self.ld_args += [
+                f"--defsym=_SDA_BASE_={self.profile.SDA.hex}",
+                f"--defsym=_SDA2_BASE_={self.profile.SDA2.hex}",
+            ]
+        if self.profile.StringHooks:
+            for address, string in self.profile.StringHooks.items():
+                self.hooks.append(StringHook(address, string))
+
+        if self.profile.InputSymbolMap:
+            self.profile.OutputSymbolMapPaths.append(self.user_environment.DolphinMaps.create_filepath(self.profile.GameID + ".map"))
+        self.gecko_table = GeckoCodeTable(self.profile.GameID, self.project_name)
+
+    def build(self) -> None:
+        super().build()
+
+        start = time()
+
+        self.load_symbol_definitions()
+        self.generate_linkerscript()
+        self.link()
+        self.bin_path = self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".bin")
+        self.process_project()
+        self.bin_data = bytearray(open(self.bin_path, "rb").read())
+        self.analyze_final()
+        self.save_symbol_map()
+
+        Console.print(f"{ORANGE}Begin Patching...")
+        self.apply_gecko()
+        self.apply_hooks()
+        self.patch_osarena_low(self.dol, self.profile.InjectionAddress + len(self.bin_data))
+        with open(self.profile.OutputDolFile, "wb") as f:
+            self.dol.save(f)
+
+        self.create_banner()
+
+        Console.print(f'\n{GREEN}🎊 Build Complete! 🎊\nSaved final binary to "{self.profile.OutputDolFile}"!')
+        self.print_extras()
+        self.final_object_file.calculate_hash()
+        self.projectfile_builder = ProjectFileBuilder(self.user_environment)
+        self.projectfile_builder.build(self.file_manager)
+        self.file_manager.save_state()
+
+    def create_banner(self) -> None:
+        if self.banner_config:
+            Console.print("Generating game banner...")
+
+            texture = GameCubeTexture(self.banner_config.BannerImage)
+            banner = BNR()
+            banner.banner_image.data = texture.encode(ImageFormat.RGB5A3)
+            banner.description.data = self.banner_config.Description
+            banner.title.data = self.banner_config.Title
+            banner.gamename.data = self.banner_config.GameName
+            banner.maker.data = self.banner_config.Maker
+            banner.short_maker.data = self.banner_config.ShortMaker
+            banner.save(self.banner_config.OutputPath)
+            Console.print(f'Banner saved to "{self.banner_config.OutputPath}"')
+
+    def print_extras(self) -> None:
+        with open(self.profile.OutputDolFile, "rb") as f:
+            md5 = hashlib.file_digest(f, "md5").hexdigest()
+            sha_256 = hashlib.file_digest(f, "sha256").hexdigest()
+            sha_512 = hashlib.file_digest(f, "sha512").hexdigest()
+            Console.print(f"{GREEN}MD5: {CYAN}{md5}\n{GREEN}SHA-256: {CYAN}{sha_256}\n{GREEN}SHA-512: {CYAN}{sha_512}")
+
+        symbols = list[Symbol]()
+        for symbol in self.symbols.values():
+            symbols.append(symbol)
+        symbols = list(set(symbols))
+        symbols.sort(key=lambda x: x.size, reverse=True)
+        symbols = symbols[:10]
+        Console.print(f"\nTop biggest symbols:")
+        for symbol in symbols:
+            Console.print(f'{GREEN}{symbol}{CYAN} in "{ORANGE}{symbol.source_file}{CYAN}" {PURPLE}{symbol.size}{GREEN} bytes')
+
+        Console.print(f"\n{CYAN}Compilation Time: {PURPLE}{self.compile_time:.2f} {CYAN}seconds")
+        Console.print(f"{CYAN}Build Time {PURPLE}{self.build_time:.2f} {CYAN}seconds")
+
+    def load_symbol_definitions(self):
+        # Load symbols from a file. Supports recognizing demangled c++ symbols
+        Console.print(f"{ORANGE}Loading manually defined symbols...")
+        for file in self.profile.SymbolsFolder.find_files(".txt", recursive=True):
+            with open(file.as_posix(), "r") as f:
+                lines = f.readlines()
+
+            section = "." + file.stem
+            for line in lines:
+                line = line.rstrip().partition("//")[0]
+                if line:
+                    name, address = line.split(" = ")
+                    if name == "sys":
+                        pass
+                    if name in self.symbols:
+                        symbol = self.symbols[name]
+                        if symbol.source_file:  # skip this symbol because we are overriding it
+                            continue
+                        symbol.hex_address = address
+                        symbol.is_absolute = True
+                        symbol.section = section
 
     def analyze_final(self):
         Console.print(f"{ORANGE}Dumping objdump...{CYAN}")
@@ -512,7 +538,7 @@ class FreighterProject:
 
     def link(self):
         Console.print(f"{CYAN}Linking...{ORANGE}")
-        args: list[str | Path] = [self.user_environment.GPP]
+        args: list[str | Path] = [self.binutils.GPP]
         for arg in self.ld_args:
             args.append("-Wl," + str(arg))
         for file in self.object_files:
@@ -721,19 +747,6 @@ class FreighterProject:
                             insert_offset += 1
                 for path in self.profile.OutputSymbolMapPaths:
                     open(path, "w").writelines(contents)
-
-    @cache
-    def demangle(self, string: str) -> str:
-        if not self.demangler_process:
-            self.demangler_process = subprocess.Popen([self.user_environment.CPPFLIT], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-
-        demangled = ""
-        if self.demangler_process.stdin and self.demangler_process.stdout:
-            self.demangler_process.stdin.write(f"{string}\n".encode())
-            self.demangler_process.stdin.flush()
-            demangled = self.demangler_process.stdout.readline().decode().rstrip()
-            Console.print(f" 🧼 {CYAN}{string}{PURPLE} -> {GREEN}{demangled}", PrintType.VERBOSE)
-        return demangled
 
     def patch_osarena_low(self, dol: DolFile, rom_end: int):
         stack_size = 0x10000

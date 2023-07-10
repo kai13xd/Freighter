@@ -2,6 +2,7 @@ from dolreader.dol import DolFile
 from freighter.colors import *
 from freighter.console import *
 from freighter.doltools import *
+from freighter.path import *
 from geckolibs.geckocode import GeckoCommand, Write16, Write32, WriteBranch, WriteString
 from dataclasses import dataclass
 
@@ -20,13 +21,14 @@ SupportedGeckoCodetypes = [
 @dataclass
 class Hook:
     address: int
-    source_file: str
+    source_file: str|PathLike
     line_number: int
+    symbol_name: str
     good: bool = False
     data: int = 0
-   
+    
 
-    def __init__(self, address: int | str, source_file: str= "", line_number: int = 0):
+    def __init__(self, address: int | str, source_file: str|PathLike= "", line_number: int = 0):
         if isinstance(address, str):
             address = int(address, 16)
         self.address = address
