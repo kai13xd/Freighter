@@ -1,7 +1,9 @@
 from functools import cache, cached_property
 from glob import glob
 from os import getcwd, makedirs, remove
-from os.path import expanduser, expandvars, isdir, isfile, realpath, abspath
+import os.path
+
+# from os.path import expanduser, expandvars, isdir, isfile, realpath, abspath
 from pathlib import PurePosixPath, PureWindowsPath
 from platform import system
 from shutil import rmtree
@@ -16,7 +18,7 @@ class Path(PureWindowsPath):
     @classmethod
     @property
     def home(cls):
-        return DirectoryPath(expanduser("~"))
+        return DirectoryPath(os.path.expanduser("~"))
 
     @classmethod
     @property
@@ -65,6 +67,14 @@ class Path(PureWindowsPath):
     def windows_path(self):
         return str(self).replace("/", "\\")
 
+    @property
+    def isdir(self) -> bool:
+        return os.path.isdir(self)
+
+    @property
+    def isfile(self) -> bool:
+        return os.path.isfile(self)
+
     def reveal(self):
         if isinstance(self, FilePath):
             subprocess.run(["explorer.exe", "/select", self.absolute().windows_path])
@@ -84,11 +94,11 @@ class Path(PureWindowsPath):
                 raise RuntimeError("Symlink loop from %r" % e.filename)
 
         try:
-            s = realpath(self, strict=strict)
+            s = os.path.realpath(self, strict=strict)
         except OSError as e:
             check_eloop(e)
             raise
-        p = self.__class__._from_parts((s,))
+        p = self.__class__._from_parts((s,))  # type: ignore
 
         # In non-strict mode, realpath() doesn't raise on symlink loops.
         # Ensure we get an exception by calling stat()
@@ -98,6 +108,9 @@ class Path(PureWindowsPath):
             except OSError as e:
                 check_eloop(e)
         return p
+
+    def encode(self, encoding: str):
+        return str(self).encode(encoding=encoding)
 
     def __repr__(self):
         return f"{self.__class__.__name__}('{str(self)}')"
@@ -113,7 +126,7 @@ class Path(PureWindowsPath):
 
 class DirectoryPath(Path):
     def exists(self) -> bool:
-        if isdir(self):
+        if self.isdir:
             Console.print(f'{ORANGE}Directory Found "{self}"!', PrintType.VERBOSE)
             return True
         else:
@@ -153,28 +166,31 @@ class DirectoryPath(Path):
 
     def find_dirs(self, recursive=False):
         result = list[DirectoryPath]()
-        for globbed in glob(f"**/**", recursive=recursive):
+        for globbed in glob(f"{self}/*/", recursive=recursive):
             result.append(DirectoryPath(globbed))
         return result
 
+    def find_files_and_dirs(self, recursive=False):
+        return self.find_dirs(recursive=recursive) + self.find_files(recursive=recursive)
+
     @staticmethod
     def expandvars(path: str):
-        return DirectoryPath(expandvars(path))
+        return DirectoryPath(os.path.expandvars(path))
 
     def create_filepath(self, filename: str):
         return FilePath(self / filename)
 
     def create(self):
-        if not isdir(self):
+        if not os.path.isdir(self):
             makedirs(self, exist_ok=True)
 
     def absolute(self):
-        return self.__class__(abspath(self))
+        return self.__class__(os.path.abspath(self))
 
 
 class FilePath(Path):
     def exists(self) -> bool:
-        if isfile(self):
+        if self.isfile:
             Console.print(f'{ORANGE}File Found "{self}"!', PrintType.VERBOSE)
             return True
         else:
@@ -195,7 +211,7 @@ class FilePath(Path):
 
     @staticmethod
     def expandvars(path: str):
-        return DirectoryPath(expandvars(path))
+        return FilePath(os.path.expandvars(path))
 
     def absolute(self):
-        return DirectoryPath(abspath(self))
+        return FilePath(os.path.abspath(self))

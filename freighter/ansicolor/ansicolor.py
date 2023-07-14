@@ -1,11 +1,18 @@
-from dataclasses import dataclass, field
+from attrs import define
 from enum import StrEnum
 from functools import cached_property
 from typing import overload
 
 
-@dataclass
+@define
 class Color:
+    _red: float
+    _green: float
+    _blue: float
+    _hue: float
+    _saturation: float
+    _luminance: float
+
     @overload
     def __init__(self, red: int, green: int, blue: int) -> None:
         ...
@@ -174,7 +181,7 @@ class AnsiBrightColor(StrEnum):
     WHITE = "\033[97m"
 
 
-@dataclass
+# @define
 class AnsiTrueColor(Color):
     def __init__(self, red: int | float, green: int | float, blue: int | float) -> None:
         super().__init__(red, green, blue)

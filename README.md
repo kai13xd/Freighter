@@ -30,7 +30,7 @@ After installation open your cli of choice and enter `freighter`
 ```
 -help : Shows the help prompt.
 
--new <Project Name> [Path]: Generates a new project at the current working directory with the specified project name.
+-new : Generates a new project.
 
 -build <Project Name> [Profile]: Builds the project with the selected profile.
 Defaults to first profile in the config if no arguments are passed.
@@ -59,41 +59,43 @@ You can generate a new project by using `freighter new ProjectName`
 ```toml
 TargetArchitecture = "PowerPC"
 ProjectName = "MyGameCubeProject"
+
 [BannerConfig]
-BannerImage = "banner.png"
+BannerImage = "banner.png"	# Path to a 96 x 32 image file
 Title = "GameTitle"
-GameName = "GameTitle"
-Maker = "MyOrganization"
-ShortMaker = "MyOrganization"
-Description = "This is my game's description!"
-OutputPath = "build/files/opening.bnr"
+GameTitle = "GameTitle"	# Game title displayed in GC Bios/Dolphin
+Maker = "MyOrganization"	# Your name, organization, or group
+ShortMaker = "MyOrganization"	# Optionally shortened Maker name
+Description = "This is my game's description!"	# Game description displayed in GC Bios/Dolphin
+OutputPath = "build/files/opening.bnr"	# Changes the output of the .bnr file
 
 
 [Profiles.Debug]
-InjectionAddress = 0x0 # The address where custom code and data will be injected into the .dol
-IncludeFolders = ["includes"]
-SourceFolders = ["source"]
-GameID = "FREI01"
+InjectionAddress = 0x0	# The address where custom code and data will be injected into the .dol
+IncludeFolders = ["includes"]	# Directory paths containing source files
+SourceFolders = ["source"]	# Directory paths containing header files
+GameID = "FREI01"	# A 6-character string to represent the game id
 InputDolFile = "main.dol"
 OutputDolFile = "build/sys/main.dol"
-SDA = 0x0
-SDA2 = 0x0
+Libraries = []	# Paths to library objects to link with
+LinkerScripts = []	# Paths to linkerscripts to link with
+SymbolsFolder = "symbols"	# Directory path containing symbol definitions.
+DiscardLibraryObjects = []	# Library object files to discard during linking
+DiscardSections = []	# Sections to discard during linking
+IgnoredSourceFiles = []	# List of source file paths to tell Freighter not to compile and link with
+IgnoreHooks = []	# List of #pragma hooks to ignore after link phase
+TemporaryFilesFolder = "temp"	# Directory path to output temporary build artifacts to a different folder
+StringHooks = {}	# A table of strings to inject into final binary at a specific address
+CompilerArgs = []	# Compiler args that apply both gcc or g++ args here
+GCCArgs = []	# Put C related compiler args here
+GPPArgs = []	# Put C++ related compiler args here
+LDArgs = []	# Linker args go here
+SDA = 0x0	# Defines the SDA (r2) register value
+SDA2 = 0x0	# Defines the SDA2 (r13) register value
 GeckoFolder = "gecko"
-InputSymbolMap = "GPVE01.map"
-OutputSymbolMapPaths = []
-IgnoredGeckoFiles = []
-TemporaryFilesFolder = "temp"
-SymbolsFolder = "symbols"
-LinkerScripts = []
-IgnoredSourceFiles = []
-IgnoreHooks = []
-DiscardLibraryObjects = []
-DiscardSections = []
-StringHooks = {}
-CompilerArgs = [] # Compiler args that apply both gcc or g++ args here
-GCCArgs = [] # Put C related compiler args here
-GPPArgs = [] # Put C++ related compiler args here
-LDArgs = [] # Linker args go here
+InputSymbolMap = "GPVE01.map"	# Path to a CodeWarrior map file Freighter will use to append new symbols to aid debugging with Dolphin emulator
+OutputSymbolMapPaths = []	# File paths to place generated CodeWarrior map.
+IgnoredGeckoFiles = []	# Any gecko txt files that should be ignored when patched into the .dol
 
 
 ```

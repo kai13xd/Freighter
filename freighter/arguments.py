@@ -36,7 +36,7 @@ class FreighterHelpFormatter(RawTextHelpFormatter):
         super().__init__(prog, indent_increment, max_help_position, width)
 
     # Don't really care for this as help text is already verbose enough
-    def add_usage(self, usage: str | None, actions: Iterable[Action], groups: Iterable[_ArgumentGroup], prefix: str | None = None) -> None:
+    def add_usage(self) -> None:
         return
 
     def add_arguments(self, actions: Iterable[Action]) -> None:
@@ -50,8 +50,6 @@ class FreighterHelpFormatter(RawTextHelpFormatter):
 
 
 class Arguments:
-
-
     @define
     class BuildArg:
         project_name: str
@@ -63,8 +61,8 @@ class Arguments:
     clean: bool = False
     reset: bool = False
     verbose: bool = False
-    debug:bool = False
-    appdata:bool = False
+    debug: bool = False
+    appdata: bool = False
     parser = ArgumentParser(description=DESCRIPTION, epilog=EPILOG, add_help=False, prefix_chars="-", formatter_class=FreighterHelpFormatter)
 
     @classmethod
@@ -86,7 +84,7 @@ class Arguments:
         cls.parser.add_argument("-verbose", action="store_true", help="Print verbose information to the console")
         cls.parser.add_argument("-debug", action="store_true", help="Print debug and verbose information to the console")
         cls.parser.add_argument("-reset", action="store_true", help="Reconfigures your UserEnvironment.toml")
-        cls.parser.add_argument("-appdata", action="store_true",help="Reveals the Freighter AppData folder")
+        cls.parser.add_argument("-appdata", action="store_true", help="Reveals the Freighter AppData folder")
         parsed_args = cls.parser.parse_args()
 
         cls.help = parsed_args.help

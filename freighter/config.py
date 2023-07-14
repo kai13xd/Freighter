@@ -92,15 +92,18 @@ class UserEnvironment(TOMLConfig):
     RyujinxAppDataPath: DirectoryPath = tomlfield()
     BinUtilsPaths: dict[str, BinUtils] = tomlfield(required=True)
 
-    def __init__(self) -> None:
+    @classmethod
+    def load(cls):
         if not USERENVIRONMENT_PATH.exists():
-            self.find_dekitppc_bin_folder()
-            self.verify_binutils_paths()
-            self.find_dolphin_documents_folder()
-            self.verify_dolphin()
-            self.save(USERENVIRONMENT_PATH)
+            config = cls()
+            config.find_dekitppc_bin_folder()
+            config.verify_binutils_paths()
+            config.find_dolphin_documents_folder()
+            config.verify_dolphin()
+            config.save(USERENVIRONMENT_PATH)
+            return config
         else:
-            self.load(USERENVIRONMENT_PATH)
+            return super(UserEnvironment, cls).load(USERENVIRONMENT_PATH)
 
     @classmethod
     def reset(cls):
@@ -181,30 +184,31 @@ class UserEnvironment(TOMLConfig):
 
 
 @define
-class SwitchProfile(TOMLObject):
+class ProjectProfile(TOMLObject):
+    # Required
+    InjectionAddress: UInt = tomlfield(default=UInt(0), required=True, comment="The address where custom code and data will be injected into the .dol")
+    IncludeFolders: list[DirectoryPath] = tomlfield(default=list[DirectoryPath](), required=True, comment="Directory paths containing source files")
+    SourceFolders: list[DirectoryPath] = tomlfield(default=list[DirectoryPath](), required=True, comment="Directory paths containing header files")
+    # Optional
+    Libraries: list[str] = tomlfield(factory=list, comment="Paths to library objects to link with")
+    LinkerScripts: list[FilePath] = tomlfield(factory=list, comment="Paths to linkerscripts to link with")
+    SymbolsFolder: DirectoryPath = tomlfield(default=DirectoryPath("symbols/"), comment="Directory path containing symbol definitions.")
+    DiscardLibraryObjects: list[str] = tomlfield(factory=list, comment="Library object files to discard during linking")
+    DiscardSections: list[str] = tomlfield(factory=list, comment="Sections to discard during linking")
+    IgnoredSourceFiles: list[FilePath] = tomlfield(factory=list, comment="List of source file paths to tell Freighter not to compile and link with")
+    IgnoreHooks: list[str] = tomlfield(factory=list, comment="List of #pragma hooks to ignore after link phase")
+    TemporaryFilesFolder: DirectoryPath = tomlfield(default=DirectoryPath("temp/"), comment="Directory path to output temporary build artifacts to a different folder")
+    StringHooks: dict[str, str] = tomlfield(factory=dict, comment="A table of strings to inject into final binary at a specific address")
+    CompilerArgs: list[str] = tomlfield(factory=list, comment="Compiler args that apply both gcc or g++ args here")
+    GCCArgs: list[str] = tomlfield(factory=list, comment="Put C related compiler args here")
+    GPPArgs: list[str] = tomlfield(factory=list, comment="Put C++ related compiler args here")
+    LDArgs: list[str] = tomlfield(factory=list, comment="Linker args go here")
+
+
+@define
+class SwitchProfile(ProjectProfile):
     # Required
     TitleID: str = tomlfield(default="0100e0b019974000", required=True)
-    InjectionAddress: UInt = tomlfield(default=UInt(0), required=True)
-    IncludeFolders: list[DirectoryPath] = tomlfield(default=[DirectoryPath("includes/")], required=True)
-    SourceFolders: list[DirectoryPath] = tomlfield(default=[DirectoryPath("source/")], required=True)
-    GameID: str = tomlfield(default="", required=True)
-    InputDolFile: FilePath = tomlfield(default=FilePath(), required=True)
-    OutputDolFile: FilePath = tomlfield(default=FilePath(), required=True)
-    MainNSOPath: FilePath = tomlfield(default=FilePath("main"), required=True)
-
-    # Optional
-    TemporaryFilesFolder: DirectoryPath = tomlfield(default=DirectoryPath("temp/"))
-    SymbolsFolder: DirectoryPath = tomlfield(default=DirectoryPath("symbols/"))
-    LinkerScripts: list[FilePath] = tomlfield(factory=list[FilePath])
-    IgnoredSourceFiles: list[FilePath] = tomlfield(factory=list[FilePath])
-    IgnoreHooks: list[str] = tomlfield(factory=list[str])
-    DiscardLibraryObjects: list[str] = tomlfield(factory=list[str])
-    DiscardSections: list[str] = tomlfield(factory=list[str])
-    StringHooks: dict[str, str] = tomlfield(factory=dict[str, str])
-    CompilerArgs: list[str] = tomlfield(factory=list[str])
-    GCCArgs: list[str] = tomlfield(factory=list[str])
-    GPPArgs: list[str] = tomlfield(factory=list[str])
-    LDArgs: list[str] = tomlfield(factory=list[str])
 
     @classmethod
     @property
@@ -213,50 +217,35 @@ class SwitchProfile(TOMLObject):
 
 
 @define
-class GameCubeProfile(TOMLObject):
+class Banner(TOMLObject):
+    BannerImage: str = tomlfield(default="banner.png", required=True, comment="Path to a 96 x 32 image file")
+    Title: str = tomlfield(default="GameTitle", required=True, comment="")
+    GameTitle: str = tomlfield(default="GameTitle", required=True, comment="Game title displayed in GC Bios/Dolphin")
+    Maker: str = tomlfield(default="MyOrganization", required=True, comment="Your name, organization, or group")
+    ShortMaker: str = tomlfield(default="MyOrganization", required=True, comment="Optionally shortened Maker name")
+    Description: str = tomlfield(default="This is my game's description!", required=True, comment="Game description displayed in GC Bios/Dolphin")
+    OutputPath: str = tomlfield(default="build/files/opening.bnr",comment="Changes the output of the .bnr file")
+
+
+@define
+class GameCubeProfile(ProjectProfile):
     # Required
-    InjectionAddress: UInt = tomlfield(default=UInt(0x80000000), required=True, comment="The address where custom code and data will be injected into the .dol")
-    IncludeFolders: list[DirectoryPath] = tomlfield(default=list[DirectoryPath](), required=True)
-    SourceFolders: list[DirectoryPath] = tomlfield(default=list[DirectoryPath](), required=True)
-    GameID: str = tomlfield(default="FREI01", required=True)
+    GameID: str = tomlfield(default="FREI01", required=True, comment="A 6-character string to represent the game id")
     InputDolFile: FilePath = tomlfield(default=DirectoryPath("main.dol"), required=True)
     OutputDolFile: FilePath = tomlfield(default=DirectoryPath("build/sys/main.dol"), required=True)
 
     # Optional
-    SDA: UInt = tomlfield(default=UInt(0))
-    SDA2: UInt = tomlfield(default=UInt(0))
+    SDA: UInt = tomlfield(default=UInt(0), comment="Defines the SDA (r2) register value")
+    SDA2: UInt = tomlfield(default=UInt(0), comment="Defines the SDA2 (r13) register value")
     GeckoFolder: DirectoryPath = tomlfield(default=DirectoryPath("gecko/"))
-    InputSymbolMap: FilePath = tomlfield(default=FilePath("GPVE01.map"))
-    OutputSymbolMapPaths: list[FilePath] = tomlfield(default=list[FilePath]())
-    IgnoredGeckoFiles: list[FilePath] = tomlfield(default=list[FilePath]())
-    TemporaryFilesFolder: DirectoryPath = tomlfield(default=DirectoryPath("temp/"))
-    SymbolsFolder: DirectoryPath = tomlfield(default=DirectoryPath("symbols/"))
-    LinkerScripts: list[FilePath] = tomlfield(default=list[FilePath]())
-    IgnoredSourceFiles: list[FilePath] = tomlfield(default=list[FilePath]())
-    IgnoreHooks: list[str] = tomlfield(default=list[str]())
-    DiscardLibraryObjects: list[str] = tomlfield(default=list[str]())
-    DiscardSections: list[str] = tomlfield(default=list[str]())
-    StringHooks: dict[str, str] = tomlfield(default=dict[str, str]())
-    CompilerArgs: list[str] = tomlfield(default=list[str](), comment="Compiler args that apply both gcc or g++ args here")
-    GCCArgs: list[str] = tomlfield(default=list[str](), comment="Put C related compiler args here")
-    GPPArgs: list[str] = tomlfield(default=list[str](), comment="Put C++ related compiler args here")
-    LDArgs: list[str] = tomlfield(default=list[str](), comment="Linker args go here")
+    InputSymbolMap: FilePath = tomlfield(default=FilePath("GPVE01.map"), comment="Path to a CodeWarrior map file Freighter will use to append new symbols to aid debugging with Dolphin emulator")
+    OutputSymbolMapPaths: list[FilePath] = tomlfield(default=list[FilePath](), comment="File paths to place generated CodeWarrior map.")
+    IgnoredGeckoFiles: list[FilePath] = tomlfield(default=list[FilePath](), comment="Any gecko txt files that should be ignored when patched into the .dol")
 
     @classmethod
     @property
     def default(cls):
         return cls(InjectionAddress=UInt(0), SourceFolders=[DirectoryPath("source/")], IncludeFolders=[DirectoryPath("includes/")], GameID="FREI01", InputDolFile=FilePath("main.dol"), OutputDolFile=FilePath("build/sys/main.dol"))
-
-
-@define
-class Banner(TOMLObject):
-    BannerImage: str = tomlfield(default="banner.png")
-    Title: str = tomlfield(default="GameTitle")
-    GameName: str = tomlfield(default="GameTitle")
-    Maker: str = tomlfield(default="MyOrganization")
-    ShortMaker: str = tomlfield(default="MyOrganization")
-    Description: str = tomlfield(default="This is my game's description!")
-    OutputPath: str = tomlfield(default="build/files/opening.bnr")
 
 
 PROJECTLIST_PATH = FilePath(FREIGHTER_LOCALAPPDATA / "ProjectList.toml")
@@ -271,21 +260,27 @@ class ProjectListEntry(TOMLObject):  # This should serialize to [Project.Whateve
 
 @define
 class ProjectManager(TOMLConfig):
-    Projects: dict[str, ProjectListEntry] = tomlfield(required=True)
+    Projects: dict[str, ProjectListEntry] = tomlfield(default={}, required=True)
 
-    def __init__(self):
-        self.Projects = {}
+    @classmethod
+    def load(cls):
         if PROJECTLIST_PATH.exists():
-            self.load(PROJECTLIST_PATH)
+            return super(ProjectManager, cls).load(PROJECTLIST_PATH)
+        else:
+            return cls()
 
     def has_project(self, project_name: str):
-        return project_name in self.Projects.keys()
+        if project_name in self.Projects.keys():
+            return True
+        else:
+            Console.print(f"{project_name} is not a stored Project")
+            self.print()
 
     def import_project(self) -> None:
         if (project_dir := open_directory_dialog("Please select a project folder to import it.")) is not None:
             config_path = project_dir.create_filepath("ProjectConfig.toml")
             config_path.assert_exists()
-            project_config = ProjectConfig.load(config_path)
+            project_config = ProjectConfig.load_dynamic(config_path)
             if not self.contains_project(project_config.ProjectName):
                 self.Projects[project_config.ProjectName] = ProjectListEntry(project_dir, config_path)
                 self.save(PROJECTLIST_PATH)
@@ -316,7 +311,7 @@ class ProjectManager(TOMLConfig):
             chdir(project_dir)
             config_path = project_dir.create_filepath(DEFAULT_PROJECT_CONFIG_NAME)
             if config_path.exists():
-                project_config = ProjectConfig.load(config_path)
+                project_config = ProjectConfig.load_dynamic(config_path)
 
                 Console.print(f"A project named {project_config.ProjectName} already exists at given path. Did you mean to import it?")
                 exit(0)
@@ -354,25 +349,24 @@ class ProjectManager(TOMLConfig):
 
 @define
 class ProjectConfig(TOMLConfig):
-    ProjectName: str = tomlfield(init=False)
-    TargetArchitecture: str = tomlfield(init=False)
-    ConfigPath: FilePath = tomlfield(init=False)
-    SelectedProfile: GameCubeProfile | SwitchProfile = tomlfield(init=False)
+    SelectedProfile: GameCubeProfile | SwitchProfile = tomlfield(serialize=False)
     Profiles: dict[str, GameCubeProfile | SwitchProfile] = tomlfield(init=False)
+    ProjectName: str = tomlfield(default="")
+    TargetArchitecture: str = tomlfield(default="")
+    
 
     @staticmethod
-    def load(config_path: FilePath):
+    def load_dynamic(config_path: FilePath):
         with open(config_path, "rb") as f:
             toml_dict = tomllib.load(f)
         target = toml_dict["TargetArchitecture"]
         config: GameCubeProjectConfig | SwitchProjectConfig
         if target == "PowerPC":
-            config = TOMLConfig.from_toml_dict(GameCubeProjectConfig, toml_dict)
+            config = GameCubeProjectConfig.load(config_path)
         elif target == "AArch64":
-            config = TOMLConfig.from_toml_dict(SwitchProjectConfig, toml_dict)
+            config = SwitchProjectConfig.load(config_path)
         else:
             raise FreighterException("wack")
-        config.ConfigPath = config_path
         return config
 
     def set_profile(self, profile_name: str):
@@ -433,18 +427,21 @@ class Pikmin2Collision(TOMLObject):
     Input: FilePath = tomlfield(required=True)
     OutputFolder: DirectoryPath = tomlfield(required=True)
     CellSize: UInt = tomlfield(required=True)
-    FlipYZ: bool = tomlfield(default=True)
+    FlipYZ: bool = tomlfield(default=False)
 
 
-@define(slots=False)
+@define
 class ProjectFileBuilder(TOMLConfig):
-    BMDModels: dict[str, BMDModel] = tomlfield(alias="BMDModel")
-    SZSArchives: dict[str, SZSArchive] = tomlfield(alias="SZSArchive")
-    Pikmin2Collisions: dict[str, Pikmin2Collision] = tomlfield(alias="Pikmin2Collision")
+    user_environment: UserEnvironment = tomlfield(serialize=False)
+    BMDModels: dict[str, BMDModel] = tomlfield(factory=dict, alias="BMDModel")
+    SZSArchives: dict[str, SZSArchive] = tomlfield(factory=dict, alias="SZSArchive")
+    Pikmin2Collisions: dict[str, Pikmin2Collision] = tomlfield(factory=dict, alias="Pikmin2Collision")
 
-    def __init__(self, user_environment: UserEnvironment):
-        self.user_environment = user_environment
-        self.load(FilePath("ProjectFiles.toml"))
+    @classmethod
+    def load(cls, user_environment: UserEnvironment):
+        config = super(ProjectFileBuilder, cls).load(FilePath("ProjectFiles.toml"))
+        config.user_environment = user_environment
+        return config
 
     def check_wiimm_path(self):
         if self.SZSArchives and not self.user_environment.WiimmPath:
@@ -534,16 +531,17 @@ class ProjectFileBuilder(TOMLConfig):
             return
 
         with ProcessPoolExecutor() as executor:
+    
             for name, archive in self.SZSArchives.items():
-                create_arc_tasks = []
+                # create_arc_tasks = []
                 compress_tasks = []
                 temp_arc_file = archive.Output.with_name("temp.arc")
-                task = executor.submit(rarc.create_arc, archive.Input, temp_arc_file)
-                create_arc_tasks.append(task)
-
-                for task in as_completed(create_arc_tasks):
-                    task = executor.submit(self.wszst_compress, self.user_environment.WiimmPath, temp_arc_file, archive.CompressionLevel, archive.Output)
-                    compress_tasks.append(task)
+                # task = executor.submit(rarc.create_arc, archive.Input, temp_arc_file)
+                # create_arc_tasks.append(task)
+                rarc.create_arc(archive.Input,temp_arc_file)
+                
+                task = executor.submit(self.wszst_compress, self.user_environment.WiimmPath, temp_arc_file, archive.CompressionLevel, archive.Output)
+                compress_tasks.append(task)
 
                 for task in as_completed(compress_tasks):
                     returncode, out, err = task.result()

@@ -25,7 +25,7 @@ class Hook:
     line_number: int
     symbol_name: str
     good: bool = False
-    data: int = 0
+    data: Any = 0
     
 
     def __init__(self, address: int | str, source_file: str|PathLike= "", line_number: int = 0):

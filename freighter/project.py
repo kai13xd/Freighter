@@ -21,6 +21,7 @@ from freighter.console import *
 from freighter.exceptions import *
 from freighter.fileformats import *
 from freighter.filelist import *
+from freighter.filelist import ObjectFile
 from freighter.hooks import *
 from freighter.filelist import *
 
@@ -39,7 +40,7 @@ class FreighterProject:
         self.library_folders: str
         self.symbols = defaultdict(Symbol)
         self.source_files = list[SourceFile]()
-        # self.asm_files = list[SourceFile]()
+        self.asm_files = list[SourceFile]()
         self.object_files = list[ObjectFile]()
         self.static_libs = list[str]()
         self.hooks = list[Hook]()
@@ -152,6 +153,34 @@ class FreighterProject:
         process = subprocess.Popen(args, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = process.communicate()
         return process.returncode, source_file, out.decode(), err.decode()
+
+    def link(self):
+        Console.print(f"{CYAN}Linking...{ORANGE}")
+        args: list[str | Path] = [self.binutils.GPP]
+        for arg in self.ld_args:
+            args.append("-Wl," + str(arg))
+        for file in self.object_files:
+            args.append(file.filepath)
+        for linkerscript in self.profile.LinkerScripts:
+            args.append("-T" + str(linkerscript))
+        for library in self.profile.Libraries:
+            args.append(library)
+        args.extend(["-Wl,-Map", self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".map")])
+        args.extend(["-o", self.final_object_file.filepath])
+
+        Console.print(f"{PURPLE}{args}", PrintType.VERBOSE)
+        process = subprocess.Popen(args, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = process.communicate()
+
+        if process.returncode:
+            re_quote = re.compile(r"(`)")
+            re_parens = re.compile(r"(\(.*\))")
+            error = re_quote.sub("'", err.decode())
+            error = re_parens.sub(rf"{MAGENTA}\n\t({PURPLE}\1{MAGENTA}){AnsiAttribute.RESET}\n", error)
+            Console.print(error)
+            raise FreighterException(f'{ERROR} failed to link object files"\n')
+        else:
+            Console.print(f"{LINKED}{PURPLE} -> {CYAN}{self.final_object_file}")
 
     def process_pragmas(self):
         for source_file in self.source_files:
@@ -346,6 +375,12 @@ class FreighterSwitchProject(FreighterProject):
 
     def build(self):
         super().build()
+        self.link()
+        with open(self.final_object_file) as f:
+            elf = ELFFile(f)
+
+    def find_undefined_symbols(self, object_file: ObjectFile):
+        pass
 
 
 class FreighterGameCubeProject(FreighterProject):
@@ -400,7 +435,7 @@ class FreighterGameCubeProject(FreighterProject):
         Console.print(f'\n{GREEN}🎊 Build Complete! 🎊\nSaved final binary to "{self.profile.OutputDolFile}"!')
         self.print_extras()
         self.final_object_file.calculate_hash()
-        self.projectfile_builder = ProjectFileBuilder(self.user_environment)
+        self.projectfile_builder = ProjectFileBuilder.load(self.user_environment)
         self.projectfile_builder.build(self.file_manager)
         self.file_manager.save_state()
 
@@ -413,7 +448,7 @@ class FreighterGameCubeProject(FreighterProject):
             banner.banner_image.data = texture.encode(ImageFormat.RGB5A3)
             banner.description.data = self.banner_config.Description
             banner.title.data = self.banner_config.Title
-            banner.gamename.data = self.banner_config.GameName
+            banner.gamename.data = self.banner_config.GameTitle
             banner.maker.data = self.banner_config.Maker
             banner.short_maker.data = self.banner_config.ShortMaker
             banner.save(self.banner_config.OutputPath)
@@ -535,32 +570,6 @@ class FreighterGameCubeProject(FreighterProject):
             )
 
         self.profile.LinkerScripts.append(linkerscript_file)
-
-    def link(self):
-        Console.print(f"{CYAN}Linking...{ORANGE}")
-        args: list[str | Path] = [self.binutils.GPP]
-        for arg in self.ld_args:
-            args.append("-Wl," + str(arg))
-        for file in self.object_files:
-            args.append(file.filepath)
-        for linkerscript in self.profile.LinkerScripts:
-            args.append("-T" + str(linkerscript))
-        args.extend(["-Wl,-Map", self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".map")])
-        args.extend(["-o", self.final_object_file.filepath])
-
-        Console.print(f"{PURPLE}{args}", PrintType.VERBOSE)
-        process = subprocess.Popen(args, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = process.communicate()
-
-        if process.returncode:
-            re_quote = re.compile(r"(`)")
-            re_parens = re.compile(r"(\(.*\))")
-            error = re_quote.sub("'", err.decode())
-            error = re_parens.sub(rf"{MAGENTA}\n\t({PURPLE}\1{MAGENTA}){AnsiAttribute.RESET}\n", error)
-            Console.print(error)
-            raise FreighterException(f'{ERROR} failed to link object files"\n')
-        else:
-            Console.print(f"{LINKED}{PURPLE} -> {CYAN}{self.final_object_file}")
 
     def process_project(self):
         with open(self.final_object_file, "rb") as f:

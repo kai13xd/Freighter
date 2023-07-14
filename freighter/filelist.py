@@ -5,13 +5,14 @@ from copy import deepcopy
 from dataclasses import dataclass
 from os import PathLike
 from os.path import isfile
-from typing import ClassVar
+from typing import Any
 
 import jsonpickle
 from freighter.config import ProjectConfig
 from freighter.path import *
 from freighter.config import FREIGHTER_LOCALAPPDATA, ProjectConfig
 from freighter.arguments import Arguments
+
 
 @dataclass
 class Symbol:
@@ -32,20 +33,23 @@ class Symbol:
     source_file = ""
     library_file = ""
     _address = 0
+
     @property
     def address(self):
         return self._address
+
     @address.setter
-    def address(self,value:int):
+    def address(self, value: int):
         self._address = value
-        
+
     @property
     def hex_address(self):
-        return hex(self._address)    
+        return hex(self._address)
+
     @hex_address.setter
-    def hex_address(self,value:str):
-        self._address = int(value,16)
-        
+    def hex_address(self, value: str):
+        self._address = int(value, 16)
+
     def __repr__(self) -> str:
         if self.is_c_linkage:
             return self.name
@@ -57,7 +61,7 @@ class Symbol:
 
 
 class File(PathLike):
-    def __init__(self,file_manager: 'FileManager', path: FilePath) -> None:
+    def __init__(self, file_manager: "FileManager", path: FilePath) -> None:
         self.file_manager = file_manager
         self.filepath = path
         self.is_dirty = False
@@ -76,27 +80,26 @@ class File(PathLike):
     def restore_previous_state(self):
         self.__dict__.update(self.file_manager.get_cached_file(self).__dict__)
         return self
-    
+
     def is_hash_same(self) -> bool:
         if self.is_dirty:
             self.calculate_hash()
             self.is_dirty = False
         if self.sha256hash == self.file_manager.get_cached_hash(self):
-            return True 
+            return True
         else:
             return False
 
     def __repr__(self) -> str:
         return self.filepath.__str__()
-    
+
     def __fspath__(self):
         return self.filepath.__str__()
 
 
-
 class HeaderFile(File):
-    def __init__(self,file_manager: 'FileManager', path: FilePath) -> None:
-        File.__init__(self,file_manager, path)
+    def __init__(self, file_manager: "FileManager", path: FilePath) -> None:
+        File.__init__(self, file_manager, path)
         self.dependencies = self.get_includes(path)
         for include in self.dependencies.copy():
             # Use the work we already have done
@@ -125,7 +128,7 @@ class HeaderFile(File):
                     include_path = FilePath(filepath.parent / include_path)
                     resolved_path = os.path.relpath(FilePath.resolve(include_path))
                     if isfile(resolved_path):
-                        dependencies.add(HeaderFile(self.file_manager,resolved_path))
+                        dependencies.add(HeaderFile(self.file_manager, resolved_path))
                         continue
 
                 # Check include folders
@@ -133,7 +136,7 @@ class HeaderFile(File):
                 for include_folder in self.file_manager.include_folders:
                     resolved_path = FilePath(include_folder / include_path)
                     if resolved_path.exists():
-                        dependencies.add(HeaderFile(self.file_manager,resolved_path))
+                        dependencies.add(HeaderFile(self.file_manager, resolved_path))
                         break
                     else:
                         resolved_path = ""
@@ -142,7 +145,7 @@ class HeaderFile(File):
                 if not resolved_path:
                     resolved_path = FilePath(filepath.parent / include_path)
                     if resolved_path.exists():
-                        dependencies.add(HeaderFile(self.file_manager,resolved_path))
+                        dependencies.add(HeaderFile(self.file_manager, resolved_path))
                         continue
 
                 if not resolved_path:
@@ -151,10 +154,10 @@ class HeaderFile(File):
 
 
 class SourceFile(HeaderFile):
-    def __init__(self,file_manager: 'FileManager', path: FilePath) -> None:
-        super().__init__(file_manager,path)
+    def __init__(self, file_manager: "FileManager", path: FilePath) -> None:
+        super().__init__(file_manager, path)
         object_filepath = FilePath(self.file_manager.temp_folder / (self.filepath.name + ".o"))
-        self.object_file = ObjectFile(self.file_manager,object_filepath)
+        self.object_file = ObjectFile(self.file_manager, object_filepath)
         self.file_manager.add_file(self.object_file)
 
     def needs_recompile(self) -> bool:
@@ -179,42 +182,36 @@ class SourceFile(HeaderFile):
 
 
 class ObjectFile(File):
-    def __init__(self,file_manager: 'FileManager', path: FilePath) -> None:
+    def __init__(self, file_manager: "FileManager", path: FilePath) -> None:
         self.symbols = dict[str, Symbol]()
-        super().__init__(file_manager,path)
+        super().__init__(file_manager, path)
         self.source_name = self.filepath.stem
-    
 
-
-     
     def add_symbol(self, symbol: Symbol):
         self.symbols[symbol.demangled_name] = symbol
         self.symbols[symbol.name] = symbol
 
 
-
 @dataclass
 class FileManager:
-    filelist:dict[str,File]
-    previous_state:dict[str,File]
-    
+    filelist: dict[str, File]
+    previous_state: Any
+
     def __init__(self, project_config: ProjectConfig):
-        self.filelist  = dict[str, File]()
+        self.filelist = dict[str, File]()
         self.filehash_path = FilePath(f"{FREIGHTER_LOCALAPPDATA}/{project_config.ProjectName}_FileList.json")
         if Arguments.clean:
             self.filehash_path.delete()
-            self.previous_state=dict[str, File]()
+            self.previous_state = dict[str, File]()
         elif self.filehash_path.exists():
             with open(self.filehash_path, "r") as f:
                 self.previous_state = jsonpickle.loads(f.read())
         else:
-            self.previous_state=dict[str, File]()
-        self.project_config = File(self,project_config.ConfigPath)
+            self.previous_state = dict[str, File]()
+        self.project_config = File(self, project_config.config_path)
         self.include_folders = project_config.SelectedProfile.IncludeFolders
-        self.temp_folder = project_config.SelectedProfile.TemporaryFilesFolder     
-        
+        self.temp_folder = project_config.SelectedProfile.TemporaryFilesFolder
 
-  
     def save_state(self):
         with open(self.filehash_path, "w") as f:
             filelist = self.filelist.copy()
@@ -223,21 +220,20 @@ class FileManager:
                 del file.is_dirty
                 if not file.dependencies:
                     del file.dependencies
-            f.write(jsonpickle.encode(filelist))
- 
+            f.write(str(jsonpickle.encode(filelist)))
 
-    def get_cached_file(self, file:File) ->File:
-        return self.previous_state[str(file)]    
-    
-    def get_file(self, file:File) ->File:
+    def get_cached_file(self, file: File) -> File:
+        return self.previous_state[str(file)]
+
+    def get_file(self, file: File) -> File:
         return self.filelist[str(file)]
-  
-    def add_file(self,file:File) ->None:
+
+    def add_file(self, file: File) -> None:
         self.filelist[str(file)] = file
 
-    def __contains__(self, file:File)-> bool:
+    def __contains__(self, file: File) -> bool:
         return str(file) in self.filelist.keys()
-    
+
     def is_cached(self, file: File) -> bool:
         return str(file) in self.previous_state.keys()
 
