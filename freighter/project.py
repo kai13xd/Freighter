@@ -85,7 +85,7 @@ class FreighterProject:
             self.demangler_process.stdin.write(f"{string}\n".encode())
             self.demangler_process.stdin.flush()
             demangled = self.demangler_process.stdout.readline().decode().rstrip()
-            Console.print(f" 🧼 {CYAN}{string}{PURPLE} -> {GREEN}{demangled}", PrintType.VERBOSE)
+            Console.printVerbose(f" 🧼 {CYAN}{string}{PURPLE} -> {GREEN}{demangled}")
         return demangled
 
     def compile(self) -> None:
@@ -168,7 +168,7 @@ class FreighterProject:
         args.extend(["-Wl,-Map", self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".map")])
         args.extend(["-o", self.final_object_file.filepath])
 
-        Console.print(f"{PURPLE}{args}", PrintType.VERBOSE)
+        Console.printVerbose(f"{PURPLE}{args}")
         process = subprocess.Popen(args, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = process.communicate()
 
@@ -405,8 +405,7 @@ class FreighterGameCubeProject(FreighterProject):
             for address, string in self.profile.StringHooks.items():
                 self.hooks.append(StringHook(address, string))
 
-        if self.profile.InputSymbolMap:
-            self.profile.OutputSymbolMapPaths.append(self.user_environment.DolphinMaps.create_filepath(self.profile.GameID + ".map"))
+
         self.gecko_table = GeckoCodeTable(self.profile.GameID, self.project_name)
 
     def build(self) -> None:
@@ -421,7 +420,7 @@ class FreighterGameCubeProject(FreighterProject):
         self.process_project()
         self.bin_data = bytearray(open(self.bin_path, "rb").read())
         self.analyze_final()
-        self.save_symbol_map()
+        self.export_symbol_map()
 
         Console.print(f"{ORANGE}Begin Patching...")
         self.apply_gecko()
@@ -690,15 +689,20 @@ class FreighterGameCubeProject(FreighterProject):
         Console.print("\n")
         self.gecko_table.apply(self.dol)
 
-    def save_symbol_map(self):
+    def export_symbol_map(self):
+        if not self.user_environment.DolphinMaps:
+            Console.print("Dolphin Maps folder is not set in the UserEnvironment.toml. Skipping map export...")
+            return
+        
         if not self.profile.InputSymbolMap:
-            Console.print(f"{ORANGE}No input symbol map. Skipping.")
+            Console.print(f"{ORANGE}No input symbol map. Skipping map export...")
             return
-
+        
         if not self.profile.OutputSymbolMapPaths:
-            Console.print(f"{ORANGE}No paths found for symbol map output. Skipping.")
+            Console.print(f"{ORANGE}No paths found for symbol map output. Skipping map export...")
             return
-
+        
+        self.profile.OutputSymbolMapPaths.append(self.user_environment.DolphinMaps.create_filepath(self.profile.GameID + ".map"))
         Console.print(f"{CYAN}Copying symbols to map...")
         with open(self.final_object_file, "rb") as f:
             elf = ELFFile(f)

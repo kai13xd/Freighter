@@ -1,5 +1,4 @@
 import re
-from enum import IntEnum
 from typing import Any
 from freighter.colors import *
 from freighter.ansicolor import ansi_format
@@ -11,16 +10,6 @@ SUCCESS = f"✅{AnsiAttribute.BOLD}{GREEN} Success{AnsiAttribute.RESET}"
 LINKING = f"📦{AnsiAttribute.BOLD}{GREEN} Linking{AnsiAttribute.RESET}"
 LINKED = f"✅{AnsiAttribute.BOLD}{GREEN} Linked{AnsiAttribute.RESET}"
 ANALYZING = f"🔎{AnsiAttribute.BOLD}{ORANGE} Analyzing{AnsiAttribute.RESET}"
-
-
-class PrintType(IntEnum):
-    NORMAL = 0
-    ERROR = 1
-    WARN = 2
-    INFO = 3
-    VERBOSE = 4
-    DEBUG = 5
-
 
 class Console:
     error = f"{AnsiAttribute.BOLD}[{RED}Error{AnsiAttribute.RESET}] "
@@ -37,28 +26,38 @@ class Console:
     re_replace_hex = rf"{CYAN}\1{GREEN}\2{AnsiAttribute.RESET}"
 
     @staticmethod
-    def print(obj: Any, type=PrintType.NORMAL) -> None:
-        from freighter.arguments import Arguments
-
-        if type is PrintType.VERBOSE and not Arguments.verbose:
-            return
-        elif type is PrintType.DEBUG and not Arguments.debug:
-            return
-
+    def formatString(obj:Any)->str:
         string = str(obj)
         string = Console.re_string.sub(Console.re_replace_string, string)
         string = Console.re_string2.sub(Console.re_replace_string2, string)
         string = Console.re_hex.sub(Console.re_replace_hex, string)
+        return string
+    
+    @staticmethod
+    def print(obj: Any) -> None:
+        print(f"{Console.formatString(obj)}{AnsiAttribute.RESET}")
 
-        if type == PrintType.NORMAL:
-            print(f"{string}{AnsiAttribute.RESET}")
-        elif type == PrintType.INFO:
-            print(f"{Console.info + string}{AnsiAttribute.RESET}")
-        elif type == PrintType.ERROR:
-            print(f"{Console.error + string}{AnsiAttribute.RESET}")
-        elif type == PrintType.WARN:
-            print(f"{Console.warn + string}{AnsiAttribute.RESET}")
-        elif type == PrintType.VERBOSE:
-            print(f"{Console.verbose + string}{AnsiAttribute.RESET}")
-        elif type == PrintType.DEBUG:
-            print(f"{Console.debug + string}{AnsiAttribute.RESET}")
+    
+    @staticmethod
+    def printInfo(obj: Any) -> None:
+        print(f"{Console.info + Console.formatString(obj)}{AnsiAttribute.RESET}")
+   
+    @staticmethod
+    def printWarn(obj: Any) -> None:
+        print(f"{Console.warn + Console.formatString(obj)}{AnsiAttribute.RESET}")
+        
+    @staticmethod
+    def printError(obj: Any) -> None:
+        print(f"{Console.error + Console.formatString(obj)}{AnsiAttribute.RESET}")
+        
+    @staticmethod
+    def printDebug(obj: Any) -> None:
+        from freighter.arguments import Arguments
+        if Arguments.debug:
+            print(f"{Console.debug + Console.formatString(obj)}{AnsiAttribute.RESET}")
+
+    @staticmethod
+    def printVerbose(obj: Any) -> None:
+        from freighter.arguments import Arguments
+        if Arguments.verbose:
+            print(f"{Console.verbose + Console.formatString(obj)}{AnsiAttribute.RESET}")

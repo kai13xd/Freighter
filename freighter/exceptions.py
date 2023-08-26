@@ -11,7 +11,7 @@ class FreighterException(Exception):
     raised_exception_start = f"{RED}{AnsiAttribute.BLINK}Raised Exception{AnsiAttribute.RESET}"
     def __init__(self, message):
         Console.print(f"{self.raised_exception_start}: {message}{AnsiAttribute.RESET}")
-        sys.exit(1)
+        
 
 class BadFunctionSignatureExecption(FreighterException):
 

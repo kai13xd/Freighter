@@ -14,7 +14,7 @@ import os
 from freighter import rarc
 from freighter import obj2grid
 import tkinter.filedialog
-
+from typing import Self
 PLATFORM = system()
 
 
@@ -93,18 +93,25 @@ class UserEnvironment(TOMLConfig):
     BinUtilsPaths: dict[str, BinUtils] = tomlfield(required=True)
 
     @classmethod
-    def load(cls):
+    def load(cls)-> Self:
         if not USERENVIRONMENT_PATH.exists():
-            config = cls()
-            config.find_dekitppc_bin_folder()
-            config.verify_binutils_paths()
-            config.find_dolphin_documents_folder()
-            config.verify_dolphin()
-            config.save(USERENVIRONMENT_PATH)
-            return config
+            return cls.create()
         else:
-            return super(UserEnvironment, cls).load(USERENVIRONMENT_PATH)
-
+            config  =  super().load(USERENVIRONMENT_PATH)
+            if config.is_empty:
+                return cls.create()
+            return config
+    
+    @classmethod
+    def create(cls) -> Self:
+        config = cls()
+        config.find_dekitppc_bin_folder()
+        config.verify_binutils_paths()
+        config.find_dolphin_documents_folder()
+        config.verify_dolphin()
+        config.save(USERENVIRONMENT_PATH)
+        return config
+                
     @classmethod
     def reset(cls):
         Console.print("Resetting UserEnvironment...")
@@ -292,7 +299,7 @@ class ProjectManager(TOMLConfig):
 
     def contains_project(self, project_name: str) -> bool:
         if project_name in self.Projects.keys():
-            Console.print(f"Freighter already has an imported project under the alias {project_name}", PrintType.ERROR)
+            Console.printError(f"Freighter already has an imported project under the alias {project_name}")
             Console.print(self.Projects[project_name])
             return True
         return False

@@ -5,11 +5,12 @@ import attrs
 from os import PathLike
 from typing import Any, Union, get_args, get_origin
 from types import UnionType
-from freighter.console import Console, PrintType
+from freighter.console import Console
 from freighter.exceptions import FreighterException
 from freighter.numerics import Number
 from freighter.path import FilePath
 from functools import wraps
+from typing import Type,TypeVar
 
 
 @attrs.define
@@ -86,7 +87,7 @@ def toml_format(obj: Any) -> str:
 class TOMLObject:
     @classmethod
     def get_fields(cls):
-        Console.print(f"Class Type '{cls.__name__}'", PrintType.DEBUG)
+        Console.printDebug(f"Class Type '{cls.__name__}'")
         field_info = [TOMLFieldInfo(x) for x in attrs.fields(cls)]
         return field_info
 
@@ -99,7 +100,7 @@ class TOMLObject:
         return field_info
 
     @classmethod
-    def get_optional_fields(cls):
+    def get_optional_fields(cls)-> list[TOMLFieldInfo]:
         field_info = []
         for field in cls.get_fields():
             if not field.required:
@@ -126,6 +127,9 @@ class TOMLObject:
         for field in field_info:
             if not field.serialize:
                 continue
+            if not hasattr(self,field.attr_name) and not field.required:
+                continue
+                
             field_value = self.__getattribute__(field.attr_name)
             if issubclass(self.__class__, TOMLConfig):
                 if isinstance(field_value, list):
@@ -152,25 +156,34 @@ class TOMLObject:
                 
         return string
 
+ConfigType = TypeVar('ConfigType', bound='TOMLConfig')
 
 @attrs.define
 class TOMLConfig(TOMLObject):
     config_path: FilePath = tomlfield(serialize=False)
-
+    is_empty:bool = tomlfield(serialize=False)
+    
     def save(self, path: FilePath):
         with open(path, "w") as f:
             f.write(self.toml_string)
-        Console.print(f'Saved "{path.stem}" to {path.parent}.', PrintType.VERBOSE)
+        Console.printVerbose(f'Saved "{path.stem}" to {path.parent}.')
 
     @classmethod
-    def load(cls, config_path: FilePath):
-        Console.print(f"Creating TOMLConfig class'{cls.__name__}'", PrintType.DEBUG)
+    def load(cls:Type[ConfigType], config_path: FilePath) -> ConfigType:
+        Console.printDebug(f"Creating TOMLConfig class'{cls.__name__}'")
         config_path.assert_exists()
         object = cls()
         object.config_path = config_path
 
         with open(object.config_path, "rb") as f:
             toml_dict = tomllib.load(f)
+        
+        if not toml_dict:
+            object.is_empty = True
+            return object
+        
+        object.is_empty = False
+        
         field_info = cls.get_fields()
         if object.has_required_fields(toml_dict, field_info):
             for field in field_info:
@@ -178,7 +191,7 @@ class TOMLConfig(TOMLObject):
                     continue
                 result_object = object.get_field_or_default(field, toml_dict)
                 object.__setattr__(field.attr_name, result_object)
-        Console.print(f'Finished Loaded "{config_path.stem}.toml" from "{config_path.parent}".', PrintType.VERBOSE)
+        Console.printVerbose(f'Finished Loaded "{config_path.stem}.toml" from "{config_path.parent}".')
         return object
 
     def get_field_or_default(self, field: TOMLFieldInfo, toml_dict: dict):
@@ -213,7 +226,7 @@ class TOMLConfig(TOMLObject):
         return kw_args
 
     def parse_dict(self, field: TOMLFieldInfo, toml_dict: dict):
-        Console.print(f"Instantiating 'dict[{field.generic_arg_types[0].__name__}, {field.generic_arg_types[1].__name__}]' with the TOML key '{field.toml_key}'", PrintType.DEBUG)
+        Console.printDebug(f"Instantiating 'dict[{field.generic_arg_types[0].__name__}, {field.generic_arg_types[1].__name__}]' with the TOML key '{field.toml_key}'")
         result_dict = {}
         dict_value_type = field.generic_arg_types[1]
         if issubclass(dict_value_type, TOMLObject):
@@ -242,7 +255,7 @@ class TOMLConfig(TOMLObject):
         return result
 
     def parse_toml_object(self, toml_object_type: type[TOMLObject], toml_dict: dict):
-        Console.print(f"Instantiating TOMLObject '{toml_object_type}'", PrintType.DEBUG)
+        Console.printDebug(f"Instantiating TOMLObject '{toml_object_type}'")
         field_info = toml_object_type.get_fields()
         kwargs = self.prepare_kwargs(field_info, toml_dict)
         return toml_object_type(**kwargs)

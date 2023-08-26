@@ -21,6 +21,23 @@ This package is made available through PyPi:
 - [VSCode](https://code.visualstudio.com/): Personal perferred code editor that is feature rich thanks to the community.
 - [Ghidra](https://ghidra-sre.org/): A GameCube modder's best friend
 
+# Building
+
+Freighter uses poetry to build distributions to upload to PyPI.
+
+- `pip install poetry`
+- `pip install poetry-dynamic-versioning`
+
+After installing poetry you can install freighter from source by running `poetry install`. By default it will install freighter and its dependencies into its own .venv container from which you can debug.
+
+Alternatively you can set poetry's config to disable virtual environments to install dirty builds globally by running `poetry config virtualenvs.create false`.
+
+You can delete venvs with `poetry env remove <venv name>` or `poetry env remove --all`
+
+Distributable wheels can be made with `poetry build`
+
+For more documentation about poetry visit this link: https://python-poetry.org/docs/
+
 # Command Line
 
 After installation open your cli of choice and enter `freighter`
@@ -47,7 +64,6 @@ Defaults to first profile in the config if no arguments are passed.
 
 -appdata : Reveals the Freighter AppData folder
 ```
-
 
 # Project Configuration
 

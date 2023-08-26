@@ -1,14 +1,12 @@
-[project]
+[tool.poetry]
 name = "freighter"
-dynamic = ["version"]
-dependencies = ["numpy", "pillow", "dolreader", "jsonpickle", "pyelftools", "geckolibs", "attrs"] #,"moderngl"]
-
+version = "0.0.0"
 description = "Kai's GameCube Toolkit enabling C/C++ code injection into .dol executables."
 readme = "README.md"
-license = { file = "LICENSE" }
-
-authors = [{ name = "Kai (@kai13xd)", email = "akaisekai13@gmail.com" }]
-maintainers = [{ name = "Kai (@kai13xd)", email = "akaisekai13@gmail.com" }]
+license = "MIT"
+authors = ["kai13xd <akaisekai13@gmail.com>"]
+maintainers = ["kai13xd <akaisekai13@gmail.com>"]
+repository  = "https://github.com/kai13xd/Freighter/"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -25,21 +23,29 @@ classifiers = [
 
 ]
 
-[project.urls]
+[tool.poetry.dependencies]
+python = ">=3.9,<=3.13"
+numpy = { version = "1.26.0b1",allow-prereleases = true, python = ">=3.9,<3.13" }
+pillow = "*"
+dolreader =  "*"
+jsonpickle =  "*"
+pyelftools =  "*"
+geckolibs =  "*"
+attrs =  "*"
+moderngl =  "*"
+
+[tool.poetry.urls]
 "Homepage" = "https://github.com/kai13xd/Freighter/"
 "Bug Reports" = "https://github.com/kai13xd/Freighter/issues"
 "Donate" = "https://ko-fi.com/kai13xd"
 
-[project.scripts]
+[tool.poetry.scripts]
 freighter = "freighter:main"
 
+[tool.poetry-dynamic-versioning]
+enable = true
+format = "{base}.{distance}+{commit}.{dirty}"
+
 [build-system]
-requires = ["setuptools>=67.6.1", "setuptools_scm[toml]>=7.1.0"]
-build-backend = "setuptools.build_meta"
-
-
-[tool.setuptools_scm]
-write_to = "freighter/version.py"
-version_scheme = "python-simplified-semver"                    #guess-next-dev, post-release, python-simplified-semver, release-branch-semver, no-guess-dev
-local_scheme = "no-local-version"                              #node-and-date, node-and-timestamp, dirty-tag, no-local-version
-git_describe_command = "git describe --tags --long --match v*"
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0", "numpy"]
+build-backend = "poetry_dynamic_versioning.backend"

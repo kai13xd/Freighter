@@ -1,9 +1,11 @@
 from argparse import ONE_OR_MORE, Action, ArgumentParser, RawTextHelpFormatter, _ArgumentGroup
 from collections.abc import Iterable
 from attrs import define
+
+from freighter import __version__
 from freighter.path import DirectoryPath
-from freighter.version import __version__
 from freighter.colors import *
+
 
 "▓▒░"
 
@@ -36,7 +38,7 @@ class FreighterHelpFormatter(RawTextHelpFormatter):
         super().__init__(prog, indent_increment, max_help_position, width)
 
     # Don't really care for this as help text is already verbose enough
-    def add_usage(self) -> None:
+    def add_usage(self,a,b,c) -> None:
         return
 
     def add_arguments(self, actions: Iterable[Action]) -> None:

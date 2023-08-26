@@ -9,7 +9,7 @@ from platform import system
 from shutil import rmtree
 from os import PathLike
 from freighter.colors import *
-from freighter.console import Console, PrintType
+from freighter.console import Console
 from freighter.exceptions import FreighterException
 import subprocess
 
@@ -115,7 +115,7 @@ class Path(PureWindowsPath):
     def __repr__(self):
         return f"{self.__class__.__name__}('{str(self)}')"
 
-    @cache
+  
     def __str__(self):
         if not self.parts:
             return ""
@@ -127,10 +127,10 @@ class Path(PureWindowsPath):
 class DirectoryPath(Path):
     def exists(self) -> bool:
         if self.isdir:
-            Console.print(f'{ORANGE}Directory Found "{self}"!', PrintType.VERBOSE)
+            Console.printVerbose(f'{ORANGE}Directory Found "{self}"!')
             return True
         else:
-            Console.print(f'The folder "{self}" does not exist', PrintType.VERBOSE)  # relative to the cwd "{getcwd()}"')
+            Console.printVerbose(f'The folder "{self}" does not exist')  # relative to the cwd "{getcwd()}"')
             return False
 
     def assert_exists(self) -> bool:
@@ -191,10 +191,10 @@ class DirectoryPath(Path):
 class FilePath(Path):
     def exists(self) -> bool:
         if self.isfile:
-            Console.print(f'{ORANGE}File Found "{self}"!', PrintType.VERBOSE)
+            Console.printVerbose(f'{ORANGE}File Found "{self}"!')
             return True
         else:
-            Console.print(f'The file "{self}" does not exist', PrintType.VERBOSE)  # relative to the cwd "{getcwd()}"')
+            Console.printVerbose(f'The file "{self}" does not exist')  # relative to the cwd "{getcwd()}"')
             return False
 
     def delete(self, ask_confirm: bool = False):
