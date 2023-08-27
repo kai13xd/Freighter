@@ -1,12 +1,14 @@
-from struct import pack, unpack
-from io import BytesIO, BufferedReader, BufferedIOBase, BufferedWriter
-from itertools import chain
-from freighter.yaz0 import decompress, read_uint32, read_uint16
-from freighter.console import *
 import os
-from freighter.path import *
-from attrs import define, field
 from enum import IntFlag
+from io import BufferedIOBase, BufferedReader, BufferedWriter, BytesIO
+from itertools import chain
+from struct import pack, unpack
+
+from attrs import define, field
+
+from freighter.console import *
+from freighter.path import *
+from freighter.yaz0 import decompress, read_uint16, read_uint32
 
 
 def write_uint32(f: BufferedIOBase, val):

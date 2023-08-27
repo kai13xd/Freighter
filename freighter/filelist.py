@@ -8,10 +8,10 @@ from os.path import isfile
 from typing import Any
 
 import jsonpickle
-from freighter.config import ProjectConfig
-from freighter.path import *
-from freighter.config import FREIGHTER_LOCALAPPDATA, ProjectConfig
+
 from freighter.arguments import Arguments
+from freighter.config import FREIGHTER_LOCALAPPDATA, ProjectConfig
+from freighter.path import *
 
 
 @dataclass

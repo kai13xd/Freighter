@@ -1,10 +1,14 @@
-from PIL import Image, ImageFile
-import numpy as np
 from enum import IntEnum
-from .bitcolorcache import *
-from freighter.console import Console
-from time import time
 from struct import pack
+from time import time
+
+import numpy as np
+from PIL import Image, ImageFile
+
+from freighter.console import Console
+
+from .bitcolorcache import *
+
 # import moderngl
 
 

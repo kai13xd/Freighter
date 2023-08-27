@@ -1,5 +1,5 @@
-from .binaryfile import *
 from ..exceptions import FreighterException
+from .binaryfile import *
 
 
 class BNR(BinaryFile):

@@ -1,5 +1,6 @@
-from freighter.exceptions import FreighterException
 from dataclasses import dataclass
+
+from freighter.exceptions import FreighterException
 
 
 @dataclass

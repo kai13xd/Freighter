@@ -1,16 +1,16 @@
 import inspect
 import tomllib
+from functools import wraps
+from os import PathLike
+from types import UnionType
+from typing import Any, Type, TypeVar, Union, get_args, get_origin
+
 import attrs
 
-from os import PathLike
-from typing import Any, Union, get_args, get_origin
-from types import UnionType
 from freighter.console import Console
 from freighter.exceptions import FreighterException
 from freighter.numerics import Number
 from freighter.path import FilePath
-from functools import wraps
-from typing import Type,TypeVar
 
 
 @attrs.define
@@ -100,7 +100,7 @@ class TOMLObject:
         return field_info
 
     @classmethod
-    def get_optional_fields(cls)-> list[TOMLFieldInfo]:
+    def get_optional_fields(cls) -> list[TOMLFieldInfo]:
         field_info = []
         for field in cls.get_fields():
             if not field.required:
@@ -119,7 +119,7 @@ class TOMLObject:
             string += self.serialize_fields(required_fields)
         if optional_fields:
             string += self.serialize_fields(optional_fields)
-          
+
         return string
 
     def serialize_fields(self, field_info: list[TOMLFieldInfo]) -> str:
@@ -127,9 +127,9 @@ class TOMLObject:
         for field in field_info:
             if not field.serialize:
                 continue
-            if not hasattr(self,field.attr_name) and not field.required:
+            if not hasattr(self, field.attr_name) and not field.required:
                 continue
-                
+
             field_value = self.__getattribute__(field.attr_name)
             if issubclass(self.__class__, TOMLConfig):
                 if isinstance(field_value, list):
@@ -148,28 +148,30 @@ class TOMLObject:
                     string += f"{field.toml_key} = {toml_format(field_value)}"
             else:
                 string += f"{field.toml_key} = {toml_format(field_value)}"
-                
+
             if field.comment:
-                string+= f"\t# {field.comment}\n"
+                string += f"\t# {field.comment}\n"
             else:
                 string += "\n"
-                
+
         return string
 
-ConfigType = TypeVar('ConfigType', bound='TOMLConfig')
+
+ConfigType = TypeVar("ConfigType", bound="TOMLConfig")
+
 
 @attrs.define
 class TOMLConfig(TOMLObject):
     config_path: FilePath = tomlfield(serialize=False)
-    is_empty:bool = tomlfield(serialize=False)
-    
+    is_empty: bool = tomlfield(serialize=False)
+
     def save(self, path: FilePath):
         with open(path, "w") as f:
             f.write(self.toml_string)
         Console.printVerbose(f'Saved "{path.stem}" to {path.parent}.')
 
     @classmethod
-    def load(cls:Type[ConfigType], config_path: FilePath) -> ConfigType:
+    def load(cls: Type[ConfigType], config_path: FilePath) -> ConfigType:
         Console.printDebug(f"Creating TOMLConfig class'{cls.__name__}'")
         config_path.assert_exists()
         object = cls()
@@ -177,13 +179,13 @@ class TOMLConfig(TOMLObject):
 
         with open(object.config_path, "rb") as f:
             toml_dict = tomllib.load(f)
-        
+
         if not toml_dict:
             object.is_empty = True
             return object
-        
+
         object.is_empty = False
-        
+
         field_info = cls.get_fields()
         if object.has_required_fields(toml_dict, field_info):
             for field in field_info:

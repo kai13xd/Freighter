@@ -1,8 +1,8 @@
-from freighter.main import main
 import time
 from functools import wraps
-from freighter.fileformats import GameCubeTexture, ImageFormat
 
+from freighter.fileformats import GameCubeTexture, ImageFormat
+from freighter.main import main
 
 iterations = 10000
 

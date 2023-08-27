@@ -1,7 +1,8 @@
+import cProfile
 import io
 import pstats
-import cProfile
 from pstats import SortKey
+
 from freighter.ansicolor import *
 
 ITERATIONS = 100

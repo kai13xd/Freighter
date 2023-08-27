@@ -1,23 +1,22 @@
+import sys
+from enum import StrEnum
+
 from freighter.colors import *
 from freighter.console import Console
-from enum import StrEnum
-import sys
-
-
 
 InvalidBranch = f""""""
 
+
 class FreighterException(Exception):
     raised_exception_start = f"{RED}{AnsiAttribute.BLINK}Raised Exception{AnsiAttribute.RESET}"
+
     def __init__(self, message):
         Console.print(f"{self.raised_exception_start}: {message}{AnsiAttribute.RESET}")
-        
+
 
 class BadFunctionSignatureExecption(FreighterException):
-
-
-    def __init__(self,source_file,line_number:int, line:str ):
-        message =f"""{ORANGE}Bad function signature!
+    def __init__(self, source_file, line_number: int, line: str):
+        message = f"""{ORANGE}Bad function signature!
 '{line}' found on line {line_number} in '{source_file}'
 
 When processing #pragma inject or pointer Freighter requires:

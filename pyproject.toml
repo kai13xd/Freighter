@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT"
 authors = ["kai13xd <akaisekai13@gmail.com>"]
 maintainers = ["kai13xd <akaisekai13@gmail.com>"]
-repository  = "https://github.com/kai13xd/Freighter/"
+repository = "https://github.com/kai13xd/Freighter/"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -25,14 +25,14 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = ">=3.9,<=3.13"
-numpy = { version = "1.26.0b1",allow-prereleases = true, python = ">=3.9,<3.13" }
+numpy = { version = "1.26.0b1", allow-prereleases = true, python = ">=3.9,<3.13" }
 pillow = "*"
-dolreader =  "*"
-jsonpickle =  "*"
-pyelftools =  "*"
-geckolibs =  "*"
-attrs =  "*"
-moderngl =  "*"
+dolreader = "*"
+jsonpickle = "*"
+pyelftools = "*"
+geckolibs = "*"
+attrs = "*"
+moderngl = "*"
 
 [tool.poetry.urls]
 "Homepage" = "https://github.com/kai13xd/Freighter/"

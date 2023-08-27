@@ -1,17 +1,17 @@
+import os.path
+import subprocess
 from functools import cache, cached_property
 from glob import glob
-from os import getcwd, makedirs, remove
-import os.path
+from os import PathLike, getcwd, makedirs, remove
 
 # from os.path import expanduser, expandvars, isdir, isfile, realpath, abspath
 from pathlib import PurePosixPath, PureWindowsPath
 from platform import system
 from shutil import rmtree
-from os import PathLike
+
 from freighter.colors import *
 from freighter.console import Console
 from freighter.exceptions import FreighterException
-import subprocess
 
 
 class Path(PureWindowsPath):
@@ -115,7 +115,6 @@ class Path(PureWindowsPath):
     def __repr__(self):
         return f"{self.__class__.__name__}('{str(self)}')"
 
-  
     def __str__(self):
         if not self.parts:
             return ""

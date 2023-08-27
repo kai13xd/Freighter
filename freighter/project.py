@@ -1,13 +1,13 @@
 import hashlib
-from re import Pattern
 import re
 import subprocess
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import cache
 from os import makedirs
+from re import Pattern
 from time import time
-from typing import Iterator, DefaultDict
+from typing import DefaultDict, Iterator
 
 from dolreader.dol import DolFile
 from dolreader.section import DataSection, Section, TextSection
@@ -15,15 +15,14 @@ from elftools.elf.elffile import ELFFile, SymbolTableSection
 from geckolibs.gct import GeckoCodeTable
 from geckolibs.geckocode import AsmInsert, AsmInsertXOR
 
-from freighter.config import *
 from freighter.colors import *
+from freighter.config import *
 from freighter.console import *
 from freighter.exceptions import *
 from freighter.fileformats import *
 from freighter.filelist import *
 from freighter.filelist import ObjectFile
 from freighter.hooks import *
-from freighter.filelist import *
 
 
 def strip_comments(line: str):
@@ -182,47 +181,57 @@ class FreighterProject:
         else:
             Console.print(f"{LINKED}{PURPLE} -> {CYAN}{self.final_object_file}")
 
+    def parse_hook(self, source_file: SourceFile) -> list[Hook]:
+        hooks = list[Hook]()
+        is_c_linkage = False
+        if source_file.filepath.suffix == ".c":
+            is_c_linkage = True
+        with open(source_file, "r", encoding="utf8") as f:
+            lines = enumerate(f.readlines())
+        for line_number, line in lines:
+            line = strip_comments(line)
+            if not line.startswith("#p"):
+                continue
+            Console.printDebug(f"Found {line}")
+            line = line.removeprefix("#pragma ")
+            if line.startswith("hook"):
+                branch_type, *addresses = line.removeprefix("hook ").split(" ")
+                line_number, lines, function_symbol = self.get_function_symbol(source_file, lines, is_c_linkage)
+                if branch_type == "bl":
+                    for address in addresses:
+                        hooks.append(BranchHook(address, function_symbol, source_file.filepath, line_number, True))
+                elif branch_type == "b":
+                    for address in addresses:
+                        hooks.append(BranchHook(address, function_symbol, source_file.filepath, line_number))
+                else:
+                    raise FreighterException(f"{branch_type} is not a valid supported branch type for #pragma hook!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
+            elif line.startswith("inject"):
+                inject_type, *addresses = line.removeprefix("inject ").split(" ")
+                if inject_type == "pointer":
+                    line_number, lines, function_symbol = self.get_function_symbol(source_file, lines, is_c_linkage)
+                    for address in addresses:
+                        hooks.append(PointerHook(address, function_symbol))
+                elif inject_type == "string":
+                    for address in addresses:
+                        inject_string = ""
+                        hooks.append(StringHook(address, inject_string))
+                else:
+                    raise FreighterException(f"Arguments for {PURPLE}{line}{CYAN} are incorrect!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
+            elif line.startswith("nop"):
+                addresses = line.removeprefix("nop ").split(" ")
+                for address in addresses:
+                    hooks.append(NOPHook(address, source_file.filepath, line_number))
+        return hooks
+
     def process_pragmas(self):
         for source_file in self.source_files:
             if source_file in self.profile.IgnoreHooks:
+                Console.printDebug(f'Ignored parsing pragma injections for "{source_file}".')
                 continue
-            is_c_linkage = False
-            if source_file.filepath.suffix == ".c":
-                is_c_linkage = True
-            with open(source_file, "r", encoding="utf8") as f:
-                lines = enumerate(f.readlines())
-            for line_number, line in lines:
-                line = strip_comments(line)
-                if not line.startswith("#p"):
-                    continue
-                line = line.removeprefix("#pragma ")
-                if line.startswith("hook"):
-                    branch_type, *addresses = line.removeprefix("hook ").split(" ")
-                    line_number, lines, function_symbol = self.get_function_symbol(source_file, lines, is_c_linkage)
-                    if branch_type == "bl":
-                        for address in addresses:
-                            self.hooks.append(BranchHook(address, function_symbol, source_file.filepath, line_number, True))
-                    elif branch_type == "b":
-                        for address in addresses:
-                            self.hooks.append(BranchHook(address, function_symbol, source_file.filepath, line_number))
-                    else:
-                        raise FreighterException(f"{branch_type} is not a valid supported branch type for #pragma hook!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
-                elif line.startswith("inject"):
-                    inject_type, *addresses = line.removeprefix("inject ").split(" ")
-                    if inject_type == "pointer":
-                        line_number, lines, function_symbol = self.get_function_symbol(source_file, lines, is_c_linkage)
-                        for address in addresses:
-                            self.hooks.append(PointerHook(address, function_symbol))
-                    elif inject_type == "string":
-                        for address in addresses:
-                            inject_string = ""
-                            self.hooks.append(StringHook(address, inject_string))
-                    else:
-                        raise FreighterException(f"Arguments for {PURPLE}{line}{CYAN} are incorrect!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
-                elif line.startswith("nop"):
-                    addresses = line.removeprefix("nop ").split(" ")
-                    for address in addresses:
-                        self.hooks.append(NOPHook(address, source_file.filepath, line_number))
+            Console.printDebug(f'Parsing "{source_file}" for pragma injections...')
+            hooks = self.parse_hook(source_file)
+            self.hooks.extend(hooks)
+
         # May help fix stupid mistakes
         unique_addresses = {}
         duplicates = defaultdict[int, list[BranchHook]](list[BranchHook])
@@ -404,7 +413,6 @@ class FreighterGameCubeProject(FreighterProject):
         if self.profile.StringHooks:
             for address, string in self.profile.StringHooks.items():
                 self.hooks.append(StringHook(address, string))
-
 
         self.gecko_table = GeckoCodeTable(self.profile.GameID, self.project_name)
 
@@ -693,15 +701,15 @@ class FreighterGameCubeProject(FreighterProject):
         if not self.user_environment.DolphinMaps:
             Console.print("Dolphin Maps folder is not set in the UserEnvironment.toml. Skipping map export...")
             return
-        
+
         if not self.profile.InputSymbolMap:
             Console.print(f"{ORANGE}No input symbol map. Skipping map export...")
             return
-        
+
         if not self.profile.OutputSymbolMapPaths:
             Console.print(f"{ORANGE}No paths found for symbol map output. Skipping map export...")
             return
-        
+
         self.profile.OutputSymbolMapPaths.append(self.user_environment.DolphinMaps.create_filepath(self.profile.GameID + ".map"))
         Console.print(f"{CYAN}Copying symbols to map...")
         with open(self.final_object_file, "rb") as f:

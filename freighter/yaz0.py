@@ -1,21 +1,22 @@
 ## Implementation of a yaz0 decoder/encoder in Python, by Yoshi2
 ## Using the specifications in http://www.amnoid.de/gc/yaz0.txt
 
-import struct
-import os
-import re
 import hashlib
 import math
-
-from timeit import default_timer as time
+import os
+import re
+import struct
 from io import BytesIO
+from timeit import default_timer as time
 from typing import BinaryIO
+
 
 def read_uint32(f):
     return struct.unpack(">I", f.read(4))[0]
-    
+
+
 def read_uint16(f):
-    #return unpack(">H", f.read(2))[0]
+    # return unpack(">H", f.read(2))[0]
     data = f.read(2)
     return data[0] << 8 | data[1]
 
@@ -23,11 +24,13 @@ def read_uint16(f):
 def read_uint8(f):
     return f.read(1)[0]
 
+
 def write_limited(f, data, limit):
     if f.tell() >= limit:
         pass
     else:
         f.write(data)
+
 
 class yaz0:
     def __init__(self, inputobj: BytesIO, outputobj: BytesIO | None = None, compress=False):
@@ -66,7 +69,7 @@ class yaz0:
         while output.tell() < self.decompressedSize:
             # The codebyte tells us what we need to do for the next 8 steps.
             codeByte = fileobj.read(1)
-            #print("codeByte {0} at position {1}".format(codeByte, fileobj.tell()))
+            # print("codeByte {0} at position {1}".format(codeByte, fileobj.tell()))
 
             # if fileobj.tell() >= self.maxsize:
             #     # We have reached the end of the compressed file, but the amount
@@ -101,7 +104,7 @@ class yaz0:
                     byte2 = ord(fileobj.read(1))
 
                     byteCount = byte1 >> 4
-                    byte1_lowerNibble = byte1 & 0xf
+                    byte1_lowerNibble = byte1 & 0xF
 
                     if byteCount == 0:
                         # We need to read a third byte which tells us
@@ -138,7 +141,7 @@ class yaz0:
                             newCopy += toCopy
 
                         # Append the rest of the copy to the new copy
-                        newCopy += (toCopy[: (diff % len(toCopy))])
+                        newCopy += toCopy[: (diff % len(toCopy))]
                         toCopy = newCopy
 
                     # print "Copying: '{0}', {1} bytes at position {2}".format(toCopy, byteCount, moveTo)
@@ -174,7 +177,6 @@ class yaz0:
 
         return output
 
-
     def __build_byte__(self, byteCount, position) -> tuple[bytes, bytes]:
         # if position >= 2**12:
         #     raise RuntimeError("{0} is outside of the range for 12 bits!".format(position))
@@ -182,7 +184,7 @@ class yaz0:
         #     raise RuntimeError("{0} is too much for 4 bits.".format(byteCount))
 
         positionNibble = position >> 8
-        positionByte = position & 0xff
+        positionByte = position & 0xFF
 
         byte1 = (byteCount << 4) | positionNibble
 
@@ -226,7 +228,7 @@ def decompress_file(filenamePath: str, outputPath: str = ""):
 
         result = yaz0obj.decompress()
 
-        if outputPath :
+        if outputPath:
             with open(outputPath, "wb") as output:
                 result = result.getvalue()
                 output.write(result)

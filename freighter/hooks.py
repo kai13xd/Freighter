@@ -1,10 +1,12 @@
+from dataclasses import dataclass
+
 from dolreader.dol import DolFile
+from geckolibs.geckocode import GeckoCommand, Write16, Write32, WriteBranch, WriteString
+
 from freighter.colors import *
 from freighter.console import *
 from freighter.doltools import *
 from freighter.path import *
-from geckolibs.geckocode import GeckoCommand, Write16, Write32, WriteBranch, WriteString
-from dataclasses import dataclass
 
 SupportedGeckoCodetypes = [
     GeckoCommand.Type.WRITE_8,
@@ -21,14 +23,13 @@ SupportedGeckoCodetypes = [
 @dataclass
 class Hook:
     address: int
-    source_file: str|PathLike
+    source_file: str | PathLike
     line_number: int
     symbol_name: str
     good: bool = False
     data: Any = 0
-    
 
-    def __init__(self, address: int | str, source_file: str|PathLike= "", line_number: int = 0):
+    def __init__(self, address: int | str, source_file: str | PathLike = "", line_number: int = 0):
         if isinstance(address, str):
             address = int(address, 16)
         self.address = address
@@ -176,7 +177,6 @@ class FileHook(Hook):
 
 
 class NOPHook(Hook):
-
     def apply_dol(self, dol: DolFile):
         if dol.is_mapped(self.address):
             dol.write_uint32(self.address, 0x60000000)

@@ -1,20 +1,22 @@
-from attrs import define
+import os
+import subprocess
+import tkinter.filedialog
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from os import chdir
 from platform import system
+from typing import Self
+
+from attrs import define
+
+from freighter import obj2grid, rarc
+from freighter.arguments import Arguments
+from freighter.colors import *
 from freighter.console import *
 from freighter.exceptions import FreighterException
-from freighter.path import Path, DirectoryPath, FilePath
-from freighter.arguments import Arguments
-from freighter.toml import *
 from freighter.numerics import UInt
-from freighter.colors import *
-import subprocess
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import os
-from freighter import rarc
-from freighter import obj2grid
-import tkinter.filedialog
-from typing import Self
+from freighter.path import DirectoryPath, FilePath, Path
+from freighter.toml import *
+
 PLATFORM = system()
 
 
@@ -93,15 +95,15 @@ class UserEnvironment(TOMLConfig):
     BinUtilsPaths: dict[str, BinUtils] = tomlfield(required=True)
 
     @classmethod
-    def load(cls)-> Self:
+    def load(cls) -> Self:
         if not USERENVIRONMENT_PATH.exists():
             return cls.create()
         else:
-            config  =  super().load(USERENVIRONMENT_PATH)
+            config = super().load(USERENVIRONMENT_PATH)
             if config.is_empty:
                 return cls.create()
             return config
-    
+
     @classmethod
     def create(cls) -> Self:
         config = cls()
@@ -111,7 +113,7 @@ class UserEnvironment(TOMLConfig):
         config.verify_dolphin()
         config.save(USERENVIRONMENT_PATH)
         return config
-                
+
     @classmethod
     def reset(cls):
         Console.print("Resetting UserEnvironment...")
@@ -231,7 +233,7 @@ class Banner(TOMLObject):
     Maker: str = tomlfield(default="MyOrganization", required=True, comment="Your name, organization, or group")
     ShortMaker: str = tomlfield(default="MyOrganization", required=True, comment="Optionally shortened Maker name")
     Description: str = tomlfield(default="This is my game's description!", required=True, comment="Game description displayed in GC Bios/Dolphin")
-    OutputPath: str = tomlfield(default="build/files/opening.bnr",comment="Changes the output of the .bnr file")
+    OutputPath: str = tomlfield(default="build/files/opening.bnr", comment="Changes the output of the .bnr file")
 
 
 @define
@@ -360,7 +362,6 @@ class ProjectConfig(TOMLConfig):
     Profiles: dict[str, GameCubeProfile | SwitchProfile] = tomlfield(init=False)
     ProjectName: str = tomlfield(default="")
     TargetArchitecture: str = tomlfield(default="")
-    
 
     @staticmethod
     def load_dynamic(config_path: FilePath):
@@ -538,15 +539,14 @@ class ProjectFileBuilder(TOMLConfig):
             return
 
         with ProcessPoolExecutor() as executor:
-    
             for name, archive in self.SZSArchives.items():
                 # create_arc_tasks = []
                 compress_tasks = []
                 temp_arc_file = archive.Output.with_name("temp.arc")
                 # task = executor.submit(rarc.create_arc, archive.Input, temp_arc_file)
                 # create_arc_tasks.append(task)
-                rarc.create_arc(archive.Input,temp_arc_file)
-                
+                rarc.create_arc(archive.Input, temp_arc_file)
+
                 task = executor.submit(self.wszst_compress, self.user_environment.WiimmPath, temp_arc_file, archive.CompressionLevel, archive.Output)
                 compress_tasks.append(task)
 

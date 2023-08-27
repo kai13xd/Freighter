@@ -1,8 +1,7 @@
 from io import BytesIO
-from struct import pack, unpack
-from typing import Type, Generic, cast, get_args, Any
-
 from os import SEEK_CUR
+from struct import pack, unpack
+from typing import Any, Generic, Type, cast, get_args
 
 
 class BinaryFile(BytesIO):

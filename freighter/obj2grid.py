@@ -4,12 +4,14 @@
 # Also I'm not responsible for any bugs caused by modification to the code :)
 
 
-from struct import pack, unpack
-from math import floor, ceil
-from re import match
-from freighter.path import *
 import time
+from math import ceil, floor
+from re import match
+from struct import pack, unpack
+
 import numpy as np
+
+from freighter.path import *
 
 
 def read_vertex(v_data):
@@ -98,7 +100,7 @@ def collides(face_v1, face_v2, face_v3, box_mid_x, box_mid_z, box_size_x, box_si
     half_x = box_size_x / 2.0
     if max_x < -half_x or min_x > +half_x:
         return False
-    
+
     min_z = min(face_v1[2], face_v2[2], face_v3[2]) - box_mid_z
     max_z = max(face_v1[2], face_v2[2], face_v3[2]) - box_mid_z
     half_z = box_size_z / 2.0
@@ -177,7 +179,7 @@ def subdivide_grid(minx, minz, gridx_start, gridx_end, gridz_start, gridz_end, c
         if gridx_start not in result:
             result[gridx_start] = {}
         result[gridx_start][gridz_start] = triangles
-        return 
+        return
 
     # assert gridx_end > gridx_start or gridz_end > gridz_start
 

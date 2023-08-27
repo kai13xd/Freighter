@@ -1,7 +1,8 @@
-from attrs import define
 from enum import StrEnum
 from functools import cached_property
 from typing import overload
+
+from attrs import define
 
 
 @define
