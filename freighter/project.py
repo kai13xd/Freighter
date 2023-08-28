@@ -221,6 +221,12 @@ class FreighterProject:
                 addresses = line.removeprefix("nop ").split(" ")
                 for address in addresses:
                     hooks.append(NOPHook(address, source_file.filepath, line_number))
+        hookstr = ""
+        for hook in hooks:
+            hookstr += f"\t\t{hook.__class__.__name__} '{hook.symbol_name}' 0x{hook.address:x}\n"
+        Console.printDebug(f"Created Hooks:\n{hookstr}\n")
+        Console.printDebug("It is important that the symbol name provided to the Hook object be EXACTLY the same as the demangled name outputted by c++filt.")
+        Console.printDebug("If this is not the case then the regex that Freighter used failed to recreate the c++filt demangled name and is probably a bug!")
         return hooks
 
     def process_pragmas(self):
@@ -485,7 +491,7 @@ class FreighterGameCubeProject(FreighterProject):
         # Load symbols from a file. Supports recognizing demangled c++ symbols
         Console.print(f"{ORANGE}Loading manually defined symbols...")
         for file in self.profile.SymbolsFolder.find_files(".txt", recursive=True):
-            with open(file.as_posix(), "r") as f:
+            with open(file, "r") as f:
                 lines = f.readlines()
 
             section = "." + file.stem
@@ -630,8 +636,13 @@ class FreighterGameCubeProject(FreighterProject):
             for name in bad_symbols:
                 badlist += f'{ORANGE}{name}{AnsiAttribute.RESET} found in {CYAN}"{self.symbols[name].source_file}"\n'
             raise FreighterException(
-                f'{ERROR} Freighter could not resolve hook addresses for the given symbols:\n{badlist}\n{AnsiAttribute.RESET}Possible Reasons:{ORANGE}\n• The cache Freighter uses for incremental builds is faulty and needs to be reset. Use -cleanup option to remove the cache.\n• If this is a C++ Symbol there may be a symbol definition missing from the {{Cyan}}"symbols"{{Orange}} folder'
-            )
+f"""{ERROR} Freighter could not resolve hook addresses for the given symbols:
+{badlist}{AnsiAttribute.RESET}
+Possible Reasons:{ORANGE}
+    • If this is a external C++ Symbol, it's symbol definition may be missing from the "symbols"{ORANGE} folder
+    • Freighter did not parse the function signature below the #pragma hook into the demangled Itanium ABI format and the lookup to get the target branch address failed.
+    • The cache Freighter uses for incremental builds is faulty and needs to be reset. Use -cleanup option to reset this cache.
+    • The compiler optimized out the function by inlining or completely discarding it therefore the symbol does not exist.""")
         if len(self.bin_data) > 0:
             new_section: Section
             if len(self.dol.textSections) <= DolFile.MaxTextSections:

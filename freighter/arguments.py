@@ -38,7 +38,7 @@ class FreighterHelpFormatter(RawTextHelpFormatter):
         super().__init__(prog, indent_increment, max_help_position, width)
 
     # Don't really care for this as help text is already verbose enough
-    def add_usage(self) -> None:
+    def add_usage(self,a,b,c) -> None:
         return
 
     def add_arguments(self, actions: Iterable[Action]) -> None:
