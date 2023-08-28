@@ -448,8 +448,9 @@ class FreighterGameCubeProject(FreighterProject):
         Console.print(f'\n{GREEN}🎊 Build Complete! 🎊\nSaved final binary to "{self.profile.OutputDolFile}"!')
         self.print_extras()
         self.final_object_file.calculate_hash()
-        self.projectfile_builder = ProjectFileBuilder.load(self.user_environment)
-        self.projectfile_builder.build(self.file_manager)
+        if FilePath("ProjectFiles.toml").exists():
+            self.projectfile_builder = ProjectFileBuilder.load(self.user_environment)
+            self.projectfile_builder.build(self.file_manager)
         self.file_manager.save_state()
 
     def create_banner(self) -> None:
