@@ -5,7 +5,7 @@ from time import time
 import numpy as np
 from PIL import Image, ImageFile
 
-from freighter.console import Console
+from freighter.logging import Logger
 
 from .bitcolorcache import *
 

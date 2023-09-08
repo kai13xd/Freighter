@@ -1,30 +1,33 @@
-import inspect
 import tomllib
 from functools import wraps
 from os import PathLike
 from types import UnionType
-from typing import Any, Type, TypeVar, Union, get_args, get_origin
+from typing import Any, Type, TypeVar, Union, get_args, get_origin, TYPE_CHECKING
 
 import attrs
-
-from freighter.console import Console
 from freighter.exceptions import FreighterException
+from freighter.logging import *
 from freighter.numerics import Number
 from freighter.path import FilePath
 
 
-@attrs.define
-class TOMLFieldInfo:
-    class_type: type = attrs.field(repr=False)
-    class_name: str
-    generic_arg_types: tuple[type, type] = attrs.field(repr=False)
-    origin: type | None = attrs.field(repr=False)
+class TOMLField:
     attr_name: str
-    toml_key: str | None = attrs.field(repr=False)
-    default: Any = attrs.field(repr=False)
-    comment: str = attrs.field(repr=False)
+    class_name: str
+    toml_key: str | None
+    default: Any
     required: bool
-    serialize: bool
+    class_type: type = attrs.field(repr=False)
+    generic_arg_types: tuple[type, ...] = attrs.field(repr=False)
+    origin: type | None = attrs.field(repr=False)
+    _comment: str = attrs.field(repr=False)
+
+    @property
+    def comment(self):
+        if self._comment:
+            return f" #{self._comment}"
+        else:
+            return ""
 
     def __init__(self, attr: attrs.Attribute):
         self.class_type = attr.type  # type: ignore
@@ -37,21 +40,16 @@ class TOMLFieldInfo:
             self.class_name = attr.type.__name__  # type: ignore
         self.toml_key = attr.alias
         self.attr_name = attr.name
-        self.default = attr.default
-        self.comment = attr.metadata["comment"]
+        if attr.default == attrs.NOTHING:
+            self.default = None
+        else:
+            self.default = attr.default
+        self._comment = attr.metadata["comment"]
         self.required = attr.metadata["required"]
-        self.serialize = attr.metadata["serialize"]
-
-    @property
-    def is_TOMLObject(self):
-        return issubclass(self.class_type, TOMLObject)
-
-    def __lt__(self, other):
-        return self.required > other.required
 
 
 @wraps(attrs.field)
-def tomlfield(*args, comment="", required=False, serialize=True, toml_key="", **kwargs):
+def tomlfield(*args, comment: str = "", required: bool = False, serialize: bool = True, toml_key: str = "", **kwargs):
     attr_field = attrs.field(*args, **kwargs)
     if toml_key:
         attr_field.alias = toml_key
@@ -63,213 +61,268 @@ def tomlfield(*args, comment="", required=False, serialize=True, toml_key="", **
     return attr_field
 
 
-def toml_format(obj: Any) -> str:
-    if isinstance(obj, PathLike) or isinstance(obj, str):
-        return f'"{obj}"'
-    if isinstance(obj, dict):
-        string = ""
-        if not obj:
-            return "{}"
-        for key, value in obj:
-            string += f"{key} = {toml_format(value)}"
-        return string
-    elif isinstance(obj, list):
-        string = "["
-        for item in obj:
-            string += toml_format(item) + ","
-        return string.removesuffix(",") + "]"
-    elif isinstance(obj, Number):
-        return obj.hex
-    return str(obj)
-
-
-@attrs.define
 class TOMLObject:
-    @classmethod
-    def get_fields(cls):
-        Console.printDebug(f"Class Type '{cls.__name__}'")
-        field_info = [TOMLFieldInfo(x) for x in attrs.fields(cls)]
-        return field_info
+    _required_fields: list[TOMLField]
+    optional_fields: list[TOMLField]
+    _fields: list[TOMLField]
+    if TYPE_CHECKING:
+        __attrs_attrs__ = tuple[attrs.Attribute]()
 
     @classmethod
-    def get_required_fields(cls):
-        field_info = []
-        for field in cls.get_fields():
-            if field.required:
-                field_info.append(field)
-        return field_info
-
-    @classmethod
-    def get_optional_fields(cls) -> list[TOMLFieldInfo]:
-        field_info = []
-        for field in cls.get_fields():
-            if not field.required:
-                field_info.append(field)
-        return field_info
-
     @property
-    def toml_string(self) -> str:
-        return self.__str__()
-
-    def __str__(self) -> str:
-        string = ""
-        required_fields = self.get_required_fields()
-        optional_fields = self.get_optional_fields()
-        if required_fields:
-            string += self.serialize_fields(required_fields)
-        if optional_fields:
-            string += self.serialize_fields(optional_fields)
-
-        return string
-
-    def serialize_fields(self, field_info: list[TOMLFieldInfo]) -> str:
-        string = ""
-        for field in field_info:
-            if not field.serialize:
-                continue
-            if not hasattr(self, field.attr_name) and not field.required:
-                continue
-
-            field_value = self.__getattribute__(field.attr_name)
-            if issubclass(self.__class__, TOMLConfig):
-                if isinstance(field_value, list):
-                    for value in field_value:
-                        string += f"[[{field.toml_key}]]\n"
-                        string += str(value)
-                elif isinstance(field_value, dict):
-                    for key, value in field_value.items():
-                        string += f"[{field.toml_key}.{key}]\n"
-                        string += str(value)
-                elif isinstance(field_value, TOMLObject):
-                    string += f"\n[{field.toml_key}]\n"
-                    string += f"{toml_format(field_value)}\n"
-                # Top-level table fields
-                else:
-                    string += f"{field.toml_key} = {toml_format(field_value)}"
-            else:
-                string += f"{field.toml_key} = {toml_format(field_value)}"
-
-            if field.comment:
-                string += f"\t# {field.comment}\n"
-            else:
-                string += "\n"
-
-        return string
-
-
-ConfigType = TypeVar("ConfigType", bound="TOMLConfig")
-
-
-@attrs.define
-class TOMLConfig(TOMLObject):
-    config_path: FilePath = tomlfield(serialize=False)
-    is_empty: bool = tomlfield(serialize=False)
-
-    def save(self, path: FilePath):
-        with open(path, "w") as f:
-            f.write(self.toml_string)
-        Console.printVerbose(f'Saved "{path.stem}" to {path.parent}.')
+    def fields(cls) -> list[TOMLField]:
+        try:
+            return cls._fields
+        except AttributeError:
+            cls._init_fields()
+            return cls._fields
 
     @classmethod
-    def load(cls: Type[ConfigType], config_path: FilePath) -> ConfigType:
-        Console.printDebug(f"Creating TOMLConfig class'{cls.__name__}'")
-        config_path.assert_exists()
-        object = cls()
-        object.config_path = config_path
+    @property
+    def required_fields(cls) -> list[TOMLField]:
+        try:
+            return cls._required_fields
+        except AttributeError:
+            cls._init_fields()
+            return cls._required_fields
 
-        with open(object.config_path, "rb") as f:
-            toml_dict = tomllib.load(f)
+    def __new__(cls, *args, **kwargs):
+        Logger.debug(f"Creating TOMLObject class'{cls.__name__}'")
+        if cls.fields:
+            pass  # Logger.debug(f"Field info already loaded for '{cls.__name__}'")
+        return super(TOMLObject, cls).__new__(cls)
 
-        if not toml_dict:
-            object.is_empty = True
-            return object
+    @classmethod
+    def _init_fields(cls) -> None:
+        debug_string_list = [f"Loading field info for '{cls.__name__}'"]
+        cls._required_fields = []
+        cls.optional_fields = []
+        cls._fields = []
+        for i, attr in enumerate(cls.__attrs_attrs__):
+            if not attr.metadata["serialize"]:  # Don't include non-serialized fields
+                continue
+            field = TOMLField(attr)
+            cls._fields.append(field)
+            debug_string_list.append(f"\tField {i}: attr_name='{field.attr_name}'  class='{field.class_name}'")
 
-        object.is_empty = False
+        for field in cls._fields:
+            if field.required:
+                cls._required_fields.append(field)
+            else:
+                cls.optional_fields.append(field)
+        Logger.debug("\n".join(debug_string_list))
 
-        field_info = cls.get_fields()
-        if object.has_required_fields(toml_dict, field_info):
-            for field in field_info:
-                if not field.serialize:
-                    continue
-                result_object = object.get_field_or_default(field, toml_dict)
-                object.__setattr__(field.attr_name, result_object)
-        Console.printVerbose(f'Finished Loaded "{config_path.stem}.toml" from "{config_path.parent}".')
-        return object
+    @classmethod
+    def _assert_has_required_fields(cls, toml_dict: dict):
+        if not cls.required_fields:
+            Logger.debug(f"'{cls.__name__}' has no required fields.")
+            return
 
-    def get_field_or_default(self, field: TOMLFieldInfo, toml_dict: dict):
-        if field.toml_key in toml_dict.keys():
-            return self.parse_field(field, toml_dict[field.toml_key])
-        elif field.default == attrs.NOTHING:
-            return None
-        elif hasattr(field.default, "factory"):
-            return field.default.factory()
-        else:
-            return field.default
-
-    def has_required_fields(self, toml_dict: dict, field_info: list[TOMLFieldInfo]):
-        required_fields = [x for x in field_info if x.required]
-        if not required_fields:
-            return True
         missing_fields = []
-        for field in required_fields:
+        for field in cls.required_fields:
             if field.toml_key not in toml_dict.keys():
                 missing_fields.append(field.toml_key)
-        if missing_fields:
-            raise FreighterException(f"{self.__class__.__name__} at '{self.config_path} 'is missing values for the following keys:\n{missing_fields}")
-        return True
 
-    def prepare_kwargs(self, field_info: list[TOMLFieldInfo], value: dict):
+        if not missing_fields:
+            return True
+
+        raise FreighterException(f"{cls.__name__} 'is missing values for the following keys:\n{missing_fields}")
+
+    @classmethod
+    def _get_kw_args(cls, toml_dict: dict):
         kw_args = {}
-        if self.has_required_fields(value, field_info):
-            for field in field_info:
-                if not field.serialize:
-                    continue
-                kw_args[field.attr_name] = self.get_field_or_default(field, value)
+        for field in cls.fields:
+            kw_args[field.attr_name] = cls._get_dict_value_or_default(field, toml_dict)
         return kw_args
 
-    def parse_dict(self, field: TOMLFieldInfo, toml_dict: dict):
-        Console.printDebug(f"Instantiating 'dict[{field.generic_arg_types[0].__name__}, {field.generic_arg_types[1].__name__}]' with the TOML key '{field.toml_key}'")
-        result_dict = {}
-        dict_value_type = field.generic_arg_types[1]
-        if issubclass(dict_value_type, TOMLObject):
-            field_info = dict_value_type.get_fields()
+    @classmethod
+    def _get_dict_value_or_default(cls, field: TOMLField, toml_dict: dict) -> Any | None:
+        if field.toml_key in toml_dict.keys():
+            return cls._parse_field(field, toml_dict[field.toml_key])
+        elif field.default == attrs.NOTHING:
+            return None
+        else:
+            try:
+                return field.default.factory()
+            except:
+                return field.default
+
+    @classmethod
+    def _recreate_generic_dict(cls, field: TOMLField, toml_dict: dict[str, Any]) -> dict:
+        Logger.debug(f"Instantiating 'dict[{field.generic_arg_types[0].__name__}, {field.generic_arg_types[1].__name__}]' with the TOML key '{field.toml_key}'")
+        result = {}
+        generic_type = field.generic_arg_types[1]
+        if issubclass(generic_type, TOMLObject):
             # Prepare the kwargs of the dict's value type and instantiate it with values
 
             for key, value in toml_dict.items():
-                if self.has_required_fields(value, field_info):
-                    result_object = self.parse_toml_object(dict_value_type, value)
-                    result_dict[key] = result_object
+                Logger.debug(f"Instantiating TOMLObject '{generic_type}'")
+                result_object = generic_type._init_toml_object(value)
+                result[key] = result_object
         else:
             for key, value in toml_dict.items():
-                result_dict[key] = dict_value_type(value)
+                result[key] = generic_type(value)
 
-        return result_dict
-
-    def parse_list(self, field: TOMLFieldInfo, toml_list: list):
-        result = []
-        list_type = field.generic_arg_types[0]
-        if issubclass(list_type, TOMLObject):
-            for item in toml_list:
-                result.append(self.parse_toml_object(list_type, item))
-        else:
-            for item in toml_list:
-                result.append(list_type(item))
         return result
 
-    def parse_toml_object(self, toml_object_type: type[TOMLObject], toml_dict: dict):
-        Console.printDebug(f"Instantiating TOMLObject '{toml_object_type}'")
-        field_info = toml_object_type.get_fields()
-        kwargs = self.prepare_kwargs(field_info, toml_dict)
-        return toml_object_type(**kwargs)
+    @classmethod
+    def _recreate_generic_list(cls, field: TOMLField, toml_list: list) -> list:
+        result = []
+        generic_type = field.generic_arg_types[0]
+        if issubclass(generic_type, TOMLObject):
+            for item in toml_list:
+                result.append(generic_type._init_toml_object(item))
+        else:
+            for item in toml_list:
+                result.append(generic_type(item))
+        return result
 
-    def parse_field(self, field: TOMLFieldInfo, toml_value: Any):
+    @classmethod
+    def _init_toml_object(cls, toml_dict: dict[str, Any]):
+        cls._assert_has_required_fields(toml_dict)
+        kw_args = {}
+        for field in cls.fields:
+            kw_args[field.attr_name] = cls._get_dict_value_or_default(field, toml_dict)
+        object = cls(**kw_args)
+        return object
+
+    @classmethod
+    def _parse_field(cls, field: TOMLField, toml_value: Any) -> Any:
         # Iterate all keys and values of subdict and convert values back to their original types
         if field.origin == dict:
-            result_object = self.parse_dict(field, toml_value)
+            result_object = cls._recreate_generic_dict(field, toml_value)
         elif field.origin == list:
-            result_object = self.parse_list(field, toml_value)
-        elif field.is_TOMLObject:
-            result_object = self.parse_toml_object(field.class_type, toml_value)
+            result_object = cls._recreate_generic_list(field, toml_value)
+        elif issubclass(field.class_type, TOMLObject):
+            result_object = field.class_type._init_toml_object(toml_value)
         else:
             result_object = field.class_type(toml_value)
         return result_object
+
+    def _format_value(self, value: Any) -> str:
+        if isinstance(value, str | PathLike):
+            return f'"{value}"'
+
+        elif isinstance(value, Number):
+            return value.hex
+        elif isinstance(value, TOMLObject):
+            string = []
+            for field in value.fields:
+                string.append(f"{field.toml_key} = {self._format_value(value.__getattribute__(field.attr_name))}")
+            return "\n".join(string)
+
+        elif isinstance(value, list | tuple | set):
+            string = ""
+            parts = []
+            for item in value:
+                parts.append(self._format_value(item))
+            return f"[{", ".join(parts)}]"
+
+        elif isinstance(value, dict):
+            string = ""
+            if not value:
+                return "{}"
+            for key, value in value.items():
+                string += f"{key} = {self._format_value(value)}"
+            return string
+        else:
+            return str(value)
+
+
+TOMLConfigType = TypeVar("TOMLConfigType", bound="TOMLConfigFile")
+
+
+class TOMLConfigFile(TOMLObject):
+    def __new__(cls, *args, **kw_args):
+        cls.__init__ = TOMLConfigFile.__init__  # This seems big ugly
+        return super(TOMLConfigFile, cls).__new__(cls)
+
+    def __init__(self, config_path: FilePath, **kw_args) -> None:
+        self.path = config_path
+        for key, value in kw_args.items():
+            self.__setattr__(key, value)
+        Logger.debug(f'Finished Loaded "{config_path}"')
+
+    @classmethod
+    def load(cls: Type[TOMLConfigType], config_path: FilePath) -> TOMLConfigType | None:
+        if not config_path.exists:
+            return None
+
+        with open(config_path, "rb") as config_file:
+            toml_dict: dict[str, Any] = tomllib.load(config_file)
+
+        if not toml_dict:
+            return None
+
+        return cls(config_path, **cls._get_kw_args(toml_dict))
+
+    @classmethod
+    def load_from_dict(cls: Type[TOMLConfigType], config_path: FilePath, toml_dict: dict) -> TOMLConfigType:
+        return cls(config_path, **cls._get_kw_args(toml_dict))
+
+    def __comment__(self) -> str:
+        return ""
+
+    @property
+    def toml_string(self) -> str:
+        formatted_lines = list[str]()
+
+        # Prepare top-level comment
+        toplevel_comment = self.__comment__()
+        if toplevel_comment:
+            toplevel_comment = f"# {toplevel_comment} #"
+            fill = "".ljust(len(toplevel_comment), "#")
+            formatted_lines.append(fill)
+            formatted_lines.append(toplevel_comment)
+            formatted_lines.append(fill)
+            formatted_lines.append("")
+
+        for field in self.fields:
+            value = self.__getattribute__(field.attr_name)
+            if value == None:
+                continue
+
+            if field.origin == list | set | tuple:
+                formatted_lines.append("")
+                formatted_lines.append(f"[[{field.toml_key}]]{field.comment}")
+                formatted_lines.append(self._format_value(value))
+
+            elif field.origin == dict:
+                value: dict = value
+                for key, value in value.items():
+                    formatted_lines.append("")
+                    formatted_lines.append(f"[{field.toml_key}.{key}]{field.comment}")
+                    formatted_lines.append(self._format_value(value))
+
+            elif issubclass(field.class_type, TOMLObject):
+                formatted_lines.append("")
+                formatted_lines.append(f"[{field.toml_key}]{field.comment}")
+                formatted_lines.append(self._format_value(value))
+            else:
+                formatted_lines.append(f"{field.toml_key} = {self._format_value(value)}{field.comment}")
+        result = "\n".join(formatted_lines).rstrip()
+        Logger.debug(result)
+        return result
+
+    def has_required_fields(self):
+        missing_fields = list[tuple[Any, TOMLField]]()
+        for field in self.required_fields:
+            attribute = self.__getattribute__(field.attr_name)
+            if attribute is None or attribute.__class__ != field.class_type:
+                missing_fields.append((attribute, field))
+
+        if not missing_fields:
+            return True
+
+        exception_string = list[str]()
+        exception_string.append(f"TOMLConfig {self.__class__.__name__} is missing required attributes:")
+        for attribute, field in missing_fields:
+            exception_string.append(f"\t{field.attr_name} = {attribute.__class__.__name__}")
+        exception_string = "\n".join(exception_string)
+        raise FreighterException(exception_string)
+
+    def save(self) -> None:
+        if self.has_required_fields():
+            with open(self.path, "w") as f:
+                f.write(self.toml_string)
+        Logger.debug(f'Saved "{self.path.stem}" to {self.path.parent}.')

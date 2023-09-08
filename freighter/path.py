@@ -1,92 +1,106 @@
-import os.path
+from __future__ import annotations
+import ntpath
+import os
 import subprocess
-from functools import cache, cached_property
+from errno import ELOOP
 from glob import glob
-from os import PathLike, getcwd, makedirs, remove
-
-# from os.path import expanduser, expandvars, isdir, isfile, realpath, abspath
-from pathlib import PurePosixPath, PureWindowsPath
-from platform import system
+from pathlib import PurePath
 from shutil import rmtree
+from typing import TYPE_CHECKING
 
-from freighter.colors import *
-from freighter.console import Console
-from freighter.exceptions import FreighterException
+if TYPE_CHECKING:
+    from io import TextIOWrapper, BufferedRandom
+_WINERROR_CANT_RESOLVE_FILENAME = 1921  # broken symlink pointing to itself
 
 
-class Path(PureWindowsPath):
-    @classmethod
-    @property
-    def home(cls):
+class Path(PurePath):
+    _raw_paths: list[str]
+    _drv: str
+    _root: str
+    _tail_cached: list[str]
+    _str: str | None
+    _str_normcase_cached: str
+    _parts_normcase_cached: list[str]
+    _lines_cached: str
+    _hash: int
+
+    def __init__(self, *args):
+        paths = list[str]()
+        self._str = None
+        for arg in args:
+            path: str = os.fspath(arg)
+            if os.path == ntpath:  # type: ignore
+                path = path.replace("\\", "/")
+            paths.append(path)
+        self._raw_paths = paths
+
+    def __new__(cls, *args, **kwargs):
+        return object.__new__(cls)
+
+    @staticmethod
+    def home() -> DirectoryPath:
         return DirectoryPath(os.path.expanduser("~"))
 
-    @classmethod
-    @property
-    def cwd(cls):
-        return DirectoryPath(getcwd())
+    @staticmethod
+    def cwd() -> DirectoryPath:
+        return DirectoryPath(os.getcwd())
 
-    # @property
-    @cached_property
+    @property
     def name(self) -> str:
         if self.parts:
             return self.parts[-1]
         else:
             return ""
 
-    # @property
-    @cached_property
-    def root(self):
-        if super().root:
-            return "/"
+    @property
+    def exists(self) -> bool:
+        return os.path.exists(self)
 
-    # @property
-    @cached_property
-    def anchor(self) -> str:
-        if self.drive:
-            return self.drive + "/"
+    @property
+    def root(self) -> str:
+        if super().root:
+            self._root = "/"
+            return self._root
         else:
             return ""
 
-    # @property
-    @cached_property
-    def parts(self) -> tuple[str]:
-        old_parts = super().parts
-        if not old_parts:
-            return tuple()
-        parts = []
-        parts.append(super().parts[0].replace("\\", "/"))
-        parts[1:] += super().parts[1:]
-        return tuple(parts)
+    @property
+    def anchor(self) -> str:
+        drive = self.drive
+        if drive:
+            return drive + "/"
+        else:
+            return ""
 
-    # @property
-    @cached_property
-    def parent(self):
+    @property
+    def stem(self) -> str:
+        """The final path component, minus its last suffix."""
+        name = self.name
+        i = name.rfind(".")
+        if 0 < i < len(name) - 1:
+            return name[:i]
+        else:
+            return name
+
+    @property
+    def parent(self) -> "DirectoryPath":
         return DirectoryPath(super().parent)
 
-    @cached_property
+    @property
     def windows_path(self):
         return str(self).replace("/", "\\")
 
-    @property
-    def isdir(self) -> bool:
-        return os.path.isdir(self)
-
-    @property
-    def isfile(self) -> bool:
-        return os.path.isfile(self)
-
-    def reveal(self):
+    def reveal(self) -> None:
         if isinstance(self, FilePath):
-            subprocess.run(["explorer.exe", "/select", self.absolute().windows_path])
+            subprocess.run(["explorer.exe", "/select", self.absolute])
         elif isinstance(self, DirectoryPath):
-            subprocess.run(["explorer.exe", self.absolute().windows_path])
+            subprocess.run(["explorer.exe", self.absolute])
 
     def resolve(self, strict=False):
-        from errno import EBADF, ELOOP, ENOENT, ENOTDIR
-
-        _WINERROR_NOT_READY = 21  # drive exists but is not accessible
-        _WINERROR_INVALID_NAME = 123  # fix for bpo-35306
-        _WINERROR_CANT_RESOLVE_FILENAME = 1921  # broken symlink pointing to itself
+        """
+        Make the path absolute, resolving all symlinks on the way and also
+        normalizing it.
+        """
 
         def check_eloop(e):
             winerror = getattr(e, "winerror", 0)
@@ -107,52 +121,63 @@ class Path(PureWindowsPath):
                 p.stat()
             except OSError as e:
                 check_eloop(e)
-        return p
+
+        return self.__class__(p)
 
     def encode(self, encoding: str):
         return str(self).encode(encoding=encoding)
 
+    def assert_exists(self):
+        if self.exists:
+            return
+        else:
+            raise FileExistsError(f'The path "{self}" does not exist')
+
     def __repr__(self):
         return f"{self.__class__.__name__}('{str(self)}')"
 
+    @property
+    def parts(self):
+        return super().parts
+
     def __str__(self):
-        if not self.parts:
-            return ""
-        if self.drive:
-            return "/".join(self.parts).replace("//", "/")
-        return "/".join(self.parts)
+        if self._str:
+            return self._str
+        else:
+            parts = self.parts
+            if self.drive:
+                self._str = self.anchor + "/".join(parts[1:])
+            else:
+                self._str = "/".join(parts)
+        return self._str
+
+
+    @property
+    def absolute(self):
+        return self.__class__(os.path.abspath(self))
+
+
+Path.__fspath__ = Path.__str__
 
 
 class DirectoryPath(Path):
-    def exists(self) -> bool:
-        if self.isdir:
-            Console.printVerbose(f'{ORANGE}Directory Found "{self}"!')
-            return True
-        else:
-            Console.printVerbose(f'The folder "{self}" does not exist')  # relative to the cwd "{getcwd()}"')
-            return False
-
-    def assert_exists(self) -> bool:
-        if self.exists():
-            return True
-        else:
-            raise FreighterException(f'The folder "{self}" does not exist')  # relative to the cwd "{getcwd()}"')
-
-    def delete(self, ask_confirm: bool = False):
-        if not self.exists():
-            return
-        if not ask_confirm or input(f'Confirm deletion of directory "{self}"?\nType "yes" to confirm:\n') == "yes":
+    def delete(self):
+        if os.path.isdir(self):
             rmtree(self)
+
+    def ask_delete(self) -> bool:
+        if os.path.isdir(self) and input(f'Confirm deletion of directory "{self}"?\nType "yes" to confirm:\n') == "yes":
+            rmtree(self)
+            return True
+        else:
+            return False
 
     def find_files(self, *extensions: str, recursive=False):
         globbed = list[str]()
         if extensions:
             for extension in extensions:
                 globstr = f"{self}/**/*{extension}"
-                globbed += glob(
-                    globstr,
-                    recursive=recursive,
-                )
+                globbed += glob(globstr, recursive=recursive)
         else:
             globbed = glob(f"{self}/*", recursive=recursive)
         result = list[FilePath]()
@@ -163,7 +188,7 @@ class DirectoryPath(Path):
                 result.append(FilePath(path))
             return result
 
-    def find_dirs(self, recursive=False):
+    def find_dirs(self, recursive: bool = False) -> list[DirectoryPath]:
         result = list[DirectoryPath]()
         for globbed in glob(f"{self}/*/", recursive=recursive):
             result.append(DirectoryPath(globbed))
@@ -176,41 +201,35 @@ class DirectoryPath(Path):
     def expandvars(path: str):
         return DirectoryPath(os.path.expandvars(path))
 
-    def create_filepath(self, filename: str):
-        return FilePath(self / filename)
+    def make_filepath(self, filename: str):
+        return FilePath(str(self) + "/" + filename)
+
+    def open_file_as_text(self, filename: str) -> TextIOWrapper:
+        return open(str(self) + "/" + filename, "w+", encoding="utf-8")
 
     def create(self):
-        if not os.path.isdir(self):
-            makedirs(self, exist_ok=True)
-
-    def absolute(self):
-        return self.__class__(os.path.abspath(self))
+        os.makedirs(self, exist_ok=True)
 
 
 class FilePath(Path):
-    def exists(self) -> bool:
-        if self.isfile:
-            Console.printVerbose(f'{ORANGE}File Found "{self}"!')
+    def delete(self):
+        if os.path.isfile(self):
+            os.remove(self)
+        return False
+
+    def open_as_text(self) -> TextIOWrapper:
+        return open(self, "w+", encoding="utf-8")
+
+    def open_as_binary(self) -> BufferedRandom:
+        return open(self, "r+b")
+
+    def ask_delete(self) -> bool:
+        if os.path.isfile(self) and input(f'Confirm deletion of file "{self}"?\nType "yes" to confirm:\n') == "yes":
+            os.remove(self)
             return True
         else:
-            Console.printVerbose(f'The file "{self}" does not exist')  # relative to the cwd "{getcwd()}"')
             return False
-
-    def delete(self, ask_confirm: bool = False):
-        if not self.exists():
-            return
-        if not ask_confirm or input(f'Confirm deletion of file "{self}"?\nType "yes" to confirm:\n') == "yes":
-            remove(self)
-
-    def assert_exists(self):
-        if self.exists():
-            return
-        else:
-            raise FreighterException(f'The file "{self}" does not exist')  # relative to the cwd "{getcwd()}"')
 
     @staticmethod
     def expandvars(path: str):
         return FilePath(os.path.expandvars(path))
-
-    def absolute(self):
-        return FilePath(os.path.abspath(self))

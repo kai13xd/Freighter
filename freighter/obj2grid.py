@@ -2,7 +2,7 @@
 # In command line: Type "python obj2grid.py -h" for help
 # Feel free to do with the code whatever but please credit me.
 # Also I'm not responsible for any bugs caused by modification to the code :)
-
+from __future__ import annotations
 
 import time
 from math import ceil, floor

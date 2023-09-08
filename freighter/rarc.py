@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from enum import IntFlag
 from io import BufferedIOBase, BufferedReader, BufferedWriter, BytesIO
@@ -5,8 +7,7 @@ from itertools import chain
 from struct import pack, unpack
 
 from attrs import define, field
-
-from freighter.console import *
+from freighter.logging import *
 from freighter.path import *
 from freighter.yaz0 import decompress, read_uint16, read_uint32
 
@@ -313,7 +314,7 @@ class ARCDirectory:
         os.makedirs(current_dirpath, exist_ok=True)
 
         for filename, file in self.files.items():
-            filepath = current_dirpath.create_filepath(filename)
+            filepath = current_dirpath.make_filepath(filename)
             with open(filepath, "w+b") as f:
                 file.dump(f)
 
@@ -655,20 +656,20 @@ import time
 
 def create_arc(input_dir: DirectoryPath, output_path: FilePath):
     start = time.time()
-    if input_dir.exists():
+    if input_dir.exists:
         dirs = input_dir.find_dirs()
         dir_count = len(dirs)
         if dir_count == 0:
             raise RuntimeError(f"Directory {input_dir} contains no folders! Exactly one folder should exist.")
         elif dir_count > 1:
             raise RuntimeError(f"Directory {input_dir} contains multiple folders! Only one folder should exist.")
-        Console.print(f'Creating arc file "{output_path}"')
+        Logger.log(LogLevel.Info, f'Creating arc file "{output_path}"')
         archive = Archive.from_dir(dirs[0])
         filelisting = dict[str, tuple[int, FileListingFlags]]()
         maxindex = 0
 
-        filelisting_path = input_dir.create_filepath("filelisting.txt")
-        if filelisting_path.exists():
+        filelisting_path = input_dir.make_filepath("filelisting.txt")
+        if filelisting_path.exists:
             with open(filelisting_path, "r") as f:
                 for line in f:
                     line = line.strip()

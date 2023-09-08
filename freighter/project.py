@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import re
 import subprocess
@@ -7,65 +9,66 @@ from functools import cache
 from os import makedirs
 from re import Pattern
 from time import time
-from typing import DefaultDict, Iterator
+from typing import Iterator
 
 from dolreader.dol import DolFile
-from dolreader.section import DataSection, Section, TextSection
-from elftools.elf.elffile import ELFFile, SymbolTableSection
-from geckolibs.gct import GeckoCodeTable
-from geckolibs.geckocode import AsmInsert, AsmInsertXOR
 
-from freighter.colors import *
+from elftools.elf.elffile import ELFFile, SymbolTableSection
 from freighter.config import *
-from freighter.console import *
 from freighter.exceptions import *
 from freighter.fileformats import *
-from freighter.filelist import *
-from freighter.filelist import ObjectFile
+from freighter.filemanager import *
 from freighter.hooks import *
+from freighter.logging import *
+from freighter.path import *
+from freighter.symbols import *
+from io import BytesIO
 
+# class ProjectProtocol(Protocol):
+#     def build(self) -> bool:
+#         ...
 
-def strip_comments(line: str):
-    return line.split("//")[0].strip()
+#     def compile(self) -> bool:
+#         ...
+
+#     def link(self) -> bool:
+#         ...
+
+#     def clean(self) -> bool:
+#         ...
 
 
 class FreighterProject:
-    def __init__(self, user_environment: UserEnvironment, project_config: ProjectConfig):
-        self.user_environment = user_environment
-        self.project_name = project_config.ProjectName
-        self.binutils = user_environment.BinUtilsPaths[project_config.TargetArchitecture]
-        self.compiler_args = project_config.SelectedProfile.CompilerArgs
-        self.ld_args = project_config.SelectedProfile.LDArgs
+    def __init__(self, user_environment: UserEnvironmentConfig, project_config: ProjectConfig, clean: bool):
         self.library_folders: str
-        self.symbols = defaultdict(Symbol)
         self.source_files = list[SourceFile]()
         self.asm_files = list[SourceFile]()
         self.object_files = list[ObjectFile]()
         self.static_libs = list[str]()
-        self.hooks = list[Hook]()
-        self.compile_time = 0
-        self.demangler_process = None
-        self.file_manager = FileManager(project_config)
-        self.profile: GameCubeProfile | SwitchProfile = project_config.SelectedProfile
-        filepath = self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".o")
-        self.final_object_file = ObjectFile(self.file_manager, filepath)
 
-    def cleanup(self):
-        Console.print(f'{CYAN}Cleaning up temporary files at "{self.profile.TemporaryFilesFolder}"')
-        self.profile.TemporaryFilesFolder.delete()
-        Console.print("Removed temporary files.")
+        self.user_environment: UserEnvironmentConfig = user_environment
+        self.project_name = project_config.ProjectName
+        self.binutils = user_environment.BinUtilsPaths[project_config.TargetArchitecture]
+        self.compiler_args = project_config.SelectedProfile.CompilerArgs
+        self.ld_args = project_config.SelectedProfile.LDArgs
+        self.profile: GameCubeProfile | SwitchProfile = project_config.SelectedProfile
+        self.temp_folder = self.profile.TemporaryFilesFolder
+        if clean:
+            self.clean()
+        self.temp_folder.create()
+        self.symbol_manager = SymbolManager(self.project_name, self.profile, self.binutils)
+        self.file_manager = FileManager(project_config)
+        self.find_source_files()
+
+    def clean(self):
+        Logger.info(f'{CYAN}Cleaning up temporary files at "{self.temp_folder}"')
+        self.temp_folder.delete()
+        Logger.info("Removed temporary files.")
 
     def build(self):
-        build_start_time = time()
-        if not self.profile.TemporaryFilesFolder.exists():
-            self.profile.TemporaryFilesFolder.create()
-        self.get_source_files()
-        self.process_pragmas()
-        self.compile()
+        ...
 
-        self.build_time = time() - build_start_time
-
-    def get_source_files(self) -> None:
+    def find_source_files(self) -> None:
         for folder in self.profile.SourceFolders:
             for file in folder.find_files(".c", ".cpp", recursive=True):
                 if file in self.profile.IgnoredSourceFiles:
@@ -74,73 +77,68 @@ class FreighterProject:
                 self.source_files.append(source_file)
                 self.object_files.append(source_file.object_file)
 
-    @cache
-    def demangle(self, string: str) -> str:
-        if not self.demangler_process:
-            self.demangler_process = subprocess.Popen([self.binutils.CPPFLIT], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-
-        demangled = ""
-        if self.demangler_process.stdin and self.demangler_process.stdout:
-            self.demangler_process.stdin.write(f"{string}\n".encode())
-            self.demangler_process.stdin.flush()
-            demangled = self.demangler_process.stdout.readline().decode().rstrip()
-            Console.printVerbose(f" 🧼 {CYAN}{string}{PURPLE} -> {GREEN}{demangled}")
-        return demangled
-
-    def compile(self) -> None:
-        compile_start_time = time()
+    @performance_profile
+    def compile(self, final_object_file: ObjectFile) -> bool:
         compile_list = []
         for source_file in self.source_files:
             if source_file.needs_recompile():
                 source_file.object_file.is_dirty = True
                 compile_list.append(source_file)
 
-        if compile_list:
-            failed_compilations = list[tuple[SourceFile, str]]()
-            successful_compilations = list[SourceFile]()
-            with ProcessPoolExecutor() as executor:
-                tasks = []
-                for source_file in compile_list:
-                    Console.print(f'{COMPILING} "{source_file}"')
-                    task = executor.submit(self.compile_task, source_file, source_file.object_file)
-                    tasks.append(task)
-                for result in as_completed(tasks):
-                    exitcode, source_file, out, err = result.result()
-                    if exitcode:
-                        failed_compilations.append((source_file, err))
-                        Console.print(f'{ERROR} "{source_file}"{CYAN}')
-                        continue
-                    else:
-                        Console.print(f'{SUCCESS} "{source_file}"{CYAN}')
-                        successful_compilations.append(source_file)
-            if failed_compilations:
-                bad_source_files = ""
-                ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", re.VERBOSE)
-                for source_file, error in failed_compilations:
-                    errorstr = ansi_escape.sub("", error)
-                    errorlines = errorstr.split("\n")
-                    length = max(len(line) for line in errorlines)
-                    header = f"{CYAN}{'=' * length}{AnsiAttribute.RESET}\n"
-                    Console.print(f'{header}{ORANGE}{AnsiAttribute.BOLD}Compile Errors{AnsiAttribute.RESET}: "{source_file}"\n{header}{error}')
-                    bad_source_files += str(source_file) + "\n"
-                raise FreighterException(f"{ORANGE}Build process halted. Please fix code errors for the following files:\n{CYAN}" + bad_source_files)
+        if not compile_list:
+            Logger.info("No source files have been modified.")
+            self.symbol_manager.symbols.update(final_object_file.restore_previous_state().symbols)
+            return False
 
-            for source_file in successful_compilations:
-                if source_file.object_file.is_hash_same():
-                    Console.print(f'"{source_file}" resulted in the same binary.')
-                    self.symbols.update(source_file.object_file.restore_previous_state().symbols)
-                    self.find_undefined_symbols(source_file.object_file)
+        failed_compilations = list[tuple[SourceFile, str]]()
+        successful_compilations = list[SourceFile]()
+        with ProcessPoolExecutor() as executor:
+            tasks = []
+            # Compile all source files in the compile list
+            for source_file in compile_list:
+                Logger.info(f'{COMPILING} "{source_file}"')
+                task = executor.submit(self.compile_task, source_file, source_file.object_file)
+                tasks.append(task)
+
+            # Await for all compilation tasks to finish
+            for result in as_completed(tasks):
+                exitcode, source_file, out, err = result.result()
+                if exitcode:
+                    failed_compilations.append((source_file, err))
+                    Logger.info(f'{ERROR} "{source_file}"{CYAN}')
+                    continue
                 else:
-                    # Update the symbol dict for any new symbols
-                    self.find_undefined_symbols(source_file.object_file)
-        else:
-            Console.print("No source files have been modified.")
-            self.symbols.update(self.final_object_file.restore_previous_state().symbols)
-        self.compile_time = time() - compile_start_time
+                    Logger.info(f'{SUCCESS} "{source_file}"{CYAN}')
+                    successful_compilations.append(source_file)
+
+        # Update the build cache with any successful compilations
+        for source_file in successful_compilations:
+            if source_file.object_file.is_hash_same():
+                Logger.info(f'Modified "{source_file}" compiled into the same binary.')
+                self.symbol_manager.symbols.update(source_file.object_file.restore_previous_state().symbols)
+                self.symbol_manager.find_symbols_nm(source_file.object_file)
+            else:
+                # Update the symbol dict for any new symbols
+                self.symbol_manager.find_symbols_nm(source_file.object_file)
+
+        # Print to console any compliation errors that occured
+        if failed_compilations:
+            bad_source_files = ""
+            ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", re.VERBOSE)
+            for source_file, error in failed_compilations:
+                errorstr = ansi_escape.sub("", error)
+                errorlines = errorstr.split("\n")
+                length = max(len(line) for line in errorlines)
+                header = f"{CYAN}{'=' * length}{AnsiAttribute.RESET}\n"
+                Logger.info(f'{header}{ORANGE}{AnsiAttribute.BOLD}Compile Errors{AnsiAttribute.RESET}: "{source_file}"\n{header}{error}')
+                bad_source_files += str(source_file) + "\n"
+            raise FreighterException(f"{ORANGE}Build process halted. Please fix code errors for the following files:\n{CYAN}" + bad_source_files)
+
+        return True
 
     def compile_task(self, source_file: SourceFile, output: ObjectFile) -> tuple[int, SourceFile, str, str]:
         args = []
-        if source_file.filepath.suffix == ".cpp":
+        if source_file.path.suffix == ".cpp":
             args = [self.binutils.GPP, "-c"] + self.profile.GPPArgs
         else:
             args = [self.binutils.GCC, "-c"] + self.profile.GCCArgs
@@ -153,21 +151,22 @@ class FreighterProject:
         out, err = process.communicate()
         return process.returncode, source_file, out.decode(), err.decode()
 
-    def link(self):
-        Console.print(f"{CYAN}Linking...{ORANGE}")
+    @performance_profile
+    def link(self, output_object: ObjectFile):
+        Logger.info(f"{CYAN}Linking...{ORANGE}")
         args: list[str | Path] = [self.binutils.GPP]
         for arg in self.ld_args:
             args.append("-Wl," + str(arg))
         for file in self.object_files:
-            args.append(file.filepath)
+            args.append(file.path)
         for linkerscript in self.profile.LinkerScripts:
             args.append("-T" + str(linkerscript))
         for library in self.profile.Libraries:
             args.append(library)
-        args.extend(["-Wl,-Map", self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".map")])
-        args.extend(["-o", self.final_object_file.filepath])
+        args.extend(["-Wl,-Map", self.temp_folder.make_filepath(self.project_name + ".map")])
+        args.extend(["-o", output_object.path])
 
-        Console.printVerbose(f"{PURPLE}{args}")
+        Logger.debug(f"{PURPLE}{args}")
         process = subprocess.Popen(args, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = process.communicate()
 
@@ -176,286 +175,81 @@ class FreighterProject:
             re_parens = re.compile(r"(\(.*\))")
             error = re_quote.sub("'", err.decode())
             error = re_parens.sub(rf"{MAGENTA}\n\t({PURPLE}\1{MAGENTA}){AnsiAttribute.RESET}\n", error)
-            Console.print(error)
+            Logger.info(error)
             raise FreighterException(f'{ERROR} failed to link object files"\n')
         else:
-            Console.print(f"{LINKED}{PURPLE} -> {CYAN}{self.final_object_file}")
-
-    def parse_hook(self, source_file: SourceFile) -> list[Hook]:
-        hooks = list[Hook]()
-        is_c_linkage = False
-        if source_file.filepath.suffix == ".c":
-            is_c_linkage = True
-        with open(source_file, "r", encoding="utf8") as f:
-            lines = enumerate(f.readlines())
-        for line_number, line in lines:
-            line = strip_comments(line)
-            if not line.startswith("#p"):
-                continue
-            Console.printDebug(f"Found {line}")
-            line = line.removeprefix("#pragma ")
-            if line.startswith("hook"):
-                branch_type, *addresses = line.removeprefix("hook ").split(" ")
-                line_number, lines, function_symbol = self.get_function_symbol(source_file, lines, is_c_linkage)
-                if branch_type == "bl":
-                    for address in addresses:
-                        hooks.append(BranchHook(address, function_symbol, source_file.filepath, line_number, True))
-                elif branch_type == "b":
-                    for address in addresses:
-                        hooks.append(BranchHook(address, function_symbol, source_file.filepath, line_number))
-                else:
-                    raise FreighterException(f"{branch_type} is not a valid supported branch type for #pragma hook!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
-            elif line.startswith("inject"):
-                inject_type, *addresses = line.removeprefix("inject ").split(" ")
-                if inject_type == "pointer":
-                    line_number, lines, function_symbol = self.get_function_symbol(source_file, lines, is_c_linkage)
-                    for address in addresses:
-                        hooks.append(PointerHook(address, function_symbol))
-                elif inject_type == "string":
-                    for address in addresses:
-                        inject_string = ""
-                        hooks.append(StringHook(address, inject_string))
-                else:
-                    raise FreighterException(f"Arguments for {PURPLE}{line}{CYAN} are incorrect!\n" + f"{line} Found in {CYAN}{source_file}{ORANGE} on line number {line_number + 1}")
-            elif line.startswith("nop"):
-                addresses = line.removeprefix("nop ").split(" ")
-                for address in addresses:
-                    hooks.append(NOPHook(address, source_file.filepath, line_number))
-        hookstr = ""
-        for hook in hooks:
-            hookstr += f"\t\t{hook.__class__.__name__} '{hook.symbol_name}' 0x{hook.address:x}\n"
-        Console.printDebug(f"Created Hooks:\n{hookstr}\n")
-        Console.printDebug("It is important that the symbol name provided to the Hook object be EXACTLY the same as the demangled name outputted by c++filt.")
-        Console.printDebug("If this is not the case then the regex that Freighter used failed to recreate the c++filt demangled name and is probably a bug!")
-        return hooks
-
-    def process_pragmas(self):
-        for source_file in self.source_files:
-            if source_file in self.profile.IgnoreHooks:
-                Console.printDebug(f'Ignored parsing pragma injections for "{source_file}".')
-                continue
-            Console.printDebug(f'Parsing "{source_file}" for pragma injections...')
-            hooks = self.parse_hook(source_file)
-            self.hooks.extend(hooks)
-
-        # May help fix stupid mistakes
-        unique_addresses = {}
-        duplicates = defaultdict[int, list[BranchHook]](list[BranchHook])
-        for hook in [x for x in self.hooks if isinstance(x, BranchHook)]:
-            if hook.address not in unique_addresses.keys():
-                unique_addresses[hook.address] = hook
-            else:
-                duplicates[hook.address].append(hook)
-                if unique_addresses[hook.address] not in duplicates[hook.address]:
-                    duplicates[hook.address].append(unique_addresses[hook.address])
-
-        if duplicates:
-            bad_hooks_string = ""
-            for address, hooks in duplicates.items():
-                bad_hooks_string += f"{hex(address)}\n"
-                for hook in hooks:
-                    bad_hooks_string += f'\t{hook.symbol_name} in "{hook.source_file}:{hook.line_number}"\n'
-            raise FreighterException(f"BranchHooks referencing different functions were found hooking into the same address!\n{bad_hooks_string}")
-
-    def find_undefined_symbols(self, object_file: ObjectFile):
-        nm_file = self.dump_nm(object_file)
-        Console.print(f'{ANALYZING} "{nm_file}"')
-        with open(nm_file, "r") as f:
-            for line in f:
-                type, symbol_name = line[8:].strip().split(" ")
-                symbol = self.symbols[symbol_name]
-                symbol.name = symbol_name
-                if symbol_name.startswith("_Z"):
-                    symbol.demangled_name = self.demangle(symbol_name)
-                    if "C1" in symbol_name:  # Because Itanium ABI likes emitting two constructors we need to differentiate them
-                        symbol.is_complete_constructor = True
-                    elif "C2" in symbol_name:
-                        symbol.is_base_constructor = True
-                    self.symbols[symbol.demangled_name] = symbol
-                    object_file.add_symbol(symbol)
-                else:
-                    symbol.is_c_linkage = True
-                    symbol.demangled_name = symbol_name
-                    object_file.add_symbol(symbol)
-                if type in ["u", "U", "b"]:
-                    continue
-                if type == "T":
-                    symbol.is_function = True
-                elif type == "v":
-                    symbol.is_weak = True
-                elif type == "B":
-                    symbol.is_bss = True
-                elif type == "d":
-                    symbol.is_data = True
-                elif type == "r":
-                    symbol.is_rodata = True
-                elif type == "a":
-                    symbol.is_absolute = True
-                symbol.is_undefined = False
-                if not symbol.source_file:
-                    if object_file.source_name == self.project_name:
-                        symbol.source_file = ""  # Temporary workaround for symbols sourced from external libs
-                    else:
-                        symbol.source_file = object_file.source_name
-
-    re_function_name: Pattern[str] = re.compile(r".* (\w*(?=\()).*")
-    re_parameter_names: Pattern[str] = re.compile(r"([^\]&*]\w+)(,|(\)\[)|(\)\()|\))")
-    re_flip_const: Pattern[str] = re.compile(r"(const) ([:\[\]<>\w]*[^ *&])")
-    re_flip_volatile: Pattern[str] = re.compile(r"(volatile) ([:\[\]<>\w]*[^ *&])")
-    re_flip_const_volatile: Pattern[str] = re.compile(r"(const volatile) ([:\[\]<>\w]*[^ *&])")
-
-    def get_function_symbol(self, source_file: SourceFile, lines: Iterator[tuple[int, str]], is_c_linkage: bool = False) -> tuple[int, Iterator[tuple[int, str]], str]:
-        """TODO: This function doesnt account for transforming typedefs/usings back to their primitive or original typename"""
-        """Also doesn't account for namespaces that arent in the function signature"""
-
-        while True:
-            line_number, line = next(lines)
-            if 'extern "C"' in line:
-                is_c_linkage = True
-            if not line:
-                continue
-            if "(" in line:
-                line = strip_comments(line)
-                line = line.rsplit("{")[0]
-                if is_c_linkage:
-                    return line_number, lines, self.re_function_name.sub(r"\1", line, 1)
-                try:
-                    result: list[str] = re.findall(r"(.*)(\(.*\))", line)[0]
-                    function_name, signature = result
-                    namespace_parts = function_name.split("::")
-                    if len(namespace_parts) > 1 and namespace_parts[-1] == namespace_parts[-2]:
-                        Console.print(f"'{line}' is a constructor")
-                    else:
-                        function_name = function_name.rsplit(" ", -1)[-1]
-                except:
-                    raise BadFunctionSignatureExecption(source_file, line_number, line)
-                if signature == "()":
-                    return line_number, lines, function_name + signature
-                signature = self.re_parameter_names.sub(r"\2", signature)
-
-                if "const " in signature or "volatile " in signature:
-                    parameters = signature.split(",")
-                    parameters[0] = parameters[0][1:]
-                    parameters[-1] = parameters[-1][:-1]
-                    result = []
-                    for parameter in parameters:
-                        parameter = parameter.lstrip()
-                        if "volatile const" in parameter:
-                            parameter = parameter.replace("volatile const", "const volatile")
-                        if "const volatile" in parameter:
-                            parameter = self.re_flip_const_volatile.sub(r"\2 \1", parameter)
-                        elif "volatile" in parameter:
-                            parameter = self.re_flip_volatile.sub(r"\2 \1", parameter)
-                        else:
-                            # c++filt returns demangled symbols with 'type const*' or 'type const&' rather than 'const type*' or 'const type&'
-                            parameter = self.re_flip_const.sub(r"\2 \1", parameter)
-                        # Passing types by value is implicitly const. c++filt returns a demangled symbol with const removed
-                        if parameter[-1] not in ["*", "&"]:
-                            parameter = parameter.replace("const", "").replace("volatile", "").rstrip()
-                        result.append(parameter)
-                    signature = f"({', '.join(result)})"
-
-                return line_number, lines, function_name + signature
-
-    def dump_objdump(self, object_path: ObjectFile, *args: str | Path) -> FilePath:
-        """Dumps the output from DevKitPPC's powerpc-eabi-objdump.exe to a .txt file"""
-        args = (self.binutils.OBJDUMP, object_path) + args
-        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".s")
-
-        with open(outpath, "w") as f:
-            subprocess.call(args, stdout=f)
-        return outpath
-
-    def dump_nm(self, object_path: FilePath, *args: str | Path) -> FilePath:
-        """Dumps the output from DevKitPPC's powerpc-eabi-nm.exe to a .txt file"""
-        args = (self.binutils.NM, object_path) + args
-        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".o.nm")
-        with open(outpath, "w") as f:
-            subprocess.call(args, stdout=f)
-        return outpath
-
-    def dump_readelf(self, object_path: ObjectFile, *args: str | Path) -> FilePath:
-        """Dumps the output from DevKitPPC's powerpc-eabi-readelf.exe to a .txt file"""
-        args = (self.binutils.READELF, object_path) + args
-
-        outpath = self.profile.TemporaryFilesFolder.create_filepath(object_path.filepath.stem + ".o.readelf")
-        with open(outpath, "w") as f:
-            subprocess.call(args, stdout=f)
-        return outpath
+            Logger.info(f"{LINKED}{PURPLE} -> {CYAN}{output_object}")
 
 
-class FreighterSwitchProject(FreighterProject):
-    def __init__(self, user_environment: UserEnvironment, project_config: SwitchProjectConfig):
-        super().__init__(user_environment, project_config)
+class SwitchProject(FreighterProject):
+    def __init__(self, user_environment: UserEnvironmentConfig, project_config: SwitchProjectConfig, clean: bool):
+        super().__init__(user_environment, project_config, clean)
 
     def build(self):
-        super().build()
-        self.link()
-        with open(self.final_object_file) as f:
+        final_object_file = ObjectFile(self.file_manager, self.temp_folder.make_filepath(self.project_name + ".o"))
+        self.compile(final_object_file)
+        self.link(final_object_file)
+        with open(final_object_file) as f:
             elf = ELFFile(f)
 
-    def find_undefined_symbols(self, object_file: ObjectFile):
-        pass
 
-
-class FreighterGameCubeProject(FreighterProject):
-    def __init__(self, user_environment: UserEnvironment, project_config: GameCubeProjectConfig):
-        super().__init__(user_environment, project_config)
-
+class GameCubeProject(FreighterProject):
+    def __init__(self, user_environment: UserEnvironmentConfig, project_config: GameCubeProjectConfig, clean: bool):
+        super().__init__(user_environment, project_config, clean)
         if isinstance(project_config.SelectedProfile, GameCubeProfile):
             self.profile: GameCubeProfile = project_config.SelectedProfile
         self.banner_config = project_config.BannerConfig
-        self.bin_data: bytearray
-        self.gecko_meta = []
-        self.dol = DolFile(open(self.profile.InputDolFile, "rb"))
+        self.hook_patcher = GameCubeHookPatcher(self.profile, self.symbol_manager)
+        self.gecko_patcher = GeckoPatcher(self.profile, project_config.ProjectName)
+
         if self.profile.InjectionAddress % 32:
-            Console.print("Warning! DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
+            Logger.warn("Warning! DOL sections must be 32-byte aligned for OSResetSystem to work properly!\n")
+
         if self.profile.SDA and self.profile.SDA2:
             self.compiler_args += ["-msdata=eabi"]
-            self.ld_args += [
-                f"--defsym=_SDA_BASE_={self.profile.SDA.hex}",
-                f"--defsym=_SDA2_BASE_={self.profile.SDA2.hex}",
-            ]
-        if self.profile.StringHooks:
-            for address, string in self.profile.StringHooks.items():
-                self.hooks.append(StringHook(address, string))
-
-        self.gecko_table = GeckoCodeTable(self.profile.GameID, self.project_name)
+            self.ld_args += [f"--defsym=_SDA_BASE_={self.profile.SDA.hex}", f"--defsym=_SDA2_BASE_={self.profile.SDA2.hex}"]
 
     def build(self) -> None:
-        super().build()
+        final_object_file = ObjectFile(self.file_manager, self.temp_folder.make_filepath(self.project_name + ".o"))
+        self.hook_patcher.find_pragma_hooks(self.source_files)
 
-        start = time()
+        if self.compile(final_object_file):
+            self.symbol_manager.find_missing_symbols()
+            self.generate_linkerscript()
+            self.link(final_object_file)
 
-        self.load_symbol_definitions()
-        self.generate_linkerscript()
-        self.link()
-        self.bin_path = self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".bin")
-        self.process_project()
-        self.bin_data = bytearray(open(self.bin_path, "rb").read())
-        self.analyze_final()
-        self.export_symbol_map()
-
-        Console.print(f"{ORANGE}Begin Patching...")
-        self.apply_gecko()
-        self.apply_hooks()
-        self.patch_osarena_low(self.dol, self.profile.InjectionAddress + len(self.bin_data))
-        with open(self.profile.OutputDolFile, "wb") as f:
-            self.dol.save(f)
+        with BytesIO() as final_binary:
+            self.write_sections(final_object_file, final_binary)
+            self.symbol_manager.find_symbols_nm(final_object_file)
+            self.symbol_manager.find_symbols_readelf(final_object_file)
+            self.export_symbol_map(final_object_file)
+            dol_file = DolFile(open(self.profile.InputBinary, "rb"))
+            self.hook_patcher.apply(dol_file, final_binary)
+            self.gecko_patcher.apply(dol_file, final_binary)
+            self.finalize(final_binary, dol_file)
 
         self.create_banner()
 
-        Console.print(f'\n{GREEN}🎊 Build Complete! 🎊\nSaved final binary to "{self.profile.OutputDolFile}"!')
-        self.print_extras()
-        self.final_object_file.calculate_hash()
-        if FilePath("ProjectFiles.toml").exists():
-            self.projectfile_builder = ProjectFileBuilder.load(self.user_environment)
-            self.projectfile_builder.build(self.file_manager)
+        Logger.info(f'{GREEN}🎊 Build Complete! 🎊\nSaved final binary to "{self.profile.OutputBinary}"!')
+        self.print_extras(final_object_file)
+
+        final_object_file.hash()
+
+        # if FilePath("ProjectFiles.toml").exists:
+        #     projectfile_builder = ProjectFileBuilder.load(FilePath("ProjectFiles.toml"))
+        #     if projectfile_builder:
+        #         projectfile_builder.build(self.file_manager)
+
         self.file_manager.save_state()
+
+    def finalize(self, final_binary: BytesIO, dol_file: DolFile):
+        self.patch_osarena_low(self.profile.InjectionAddress + final_binary.getbuffer().nbytes, dol_file)
+        with open(self.profile.OutputBinary, "wb") as f:
+            dol_file.save(f)
 
     def create_banner(self) -> None:
         if self.banner_config:
-            Console.print("Generating game banner...")
+            Logger.info("Generating game banner...")
 
             texture = GameCubeTexture(self.banner_config.BannerImage)
             banner = BNR()
@@ -466,63 +260,33 @@ class FreighterGameCubeProject(FreighterProject):
             banner.maker.data = self.banner_config.Maker
             banner.short_maker.data = self.banner_config.ShortMaker
             banner.save(self.banner_config.OutputPath)
-            Console.print(f'Banner saved to "{self.banner_config.OutputPath}"')
+            Logger.info(f'Banner saved to "{self.banner_config.OutputPath}"')
 
-    def print_extras(self) -> None:
-        with open(self.profile.OutputDolFile, "rb") as f:
+    def print_extras(self, final_object_file: ObjectFile) -> None:
+        with open(final_object_file, "rb") as f:
             md5 = hashlib.file_digest(f, "md5").hexdigest()
             sha_256 = hashlib.file_digest(f, "sha256").hexdigest()
             sha_512 = hashlib.file_digest(f, "sha512").hexdigest()
-            Console.print(f"{GREEN}MD5: {CYAN}{md5}\n{GREEN}SHA-256: {CYAN}{sha_256}\n{GREEN}SHA-512: {CYAN}{sha_512}")
+            Logger.info(f"Hashes:\n{GREEN}MD5: {CYAN}{md5}\n{GREEN}SHA-256: {CYAN}{sha_256}\n{GREEN}SHA-512: {CYAN}{sha_512}")
 
-        symbols = list[Symbol]()
-        for symbol in self.symbols.values():
-            symbols.append(symbol)
-        symbols = list(set(symbols))
+        # Sort symbols by size
+        symbols = list(self.symbol_manager.symbols.values())
         symbols.sort(key=lambda x: x.size, reverse=True)
         symbols = symbols[:10]
-        Console.print(f"\nTop biggest symbols:")
+
+        top_symbols_str = []
+        top_symbols_str.append("Top biggest symbols:")
         for symbol in symbols:
-            Console.print(f'{GREEN}{symbol}{CYAN} in "{ORANGE}{symbol.source_file}{CYAN}" {PURPLE}{symbol.size}{GREEN} bytes')
-
-        Console.print(f"\n{CYAN}Compilation Time: {PURPLE}{self.compile_time:.2f} {CYAN}seconds")
-        Console.print(f"{CYAN}Build Time {PURPLE}{self.build_time:.2f} {CYAN}seconds")
-
-    def load_symbol_definitions(self):
-        # Load symbols from a file. Supports recognizing demangled c++ symbols
-        Console.print(f"{ORANGE}Loading manually defined symbols...")
-        for file in self.profile.SymbolsFolder.find_files(".txt", recursive=True):
-            with open(file, "r") as f:
-                lines = f.readlines()
-
-            section = "." + file.stem
-            for line in lines:
-                line = line.rstrip().partition("//")[0]
-                if line:
-                    name, address = line.split(" = ")
-                    if name == "sys":
-                        pass
-                    if name in self.symbols:
-                        symbol = self.symbols[name]
-                        if symbol.source_file:  # skip this symbol because we are overriding it
-                            continue
-                        symbol.hex_address = address
-                        symbol.is_absolute = True
-                        symbol.section = section
-
-    def analyze_final(self):
-        Console.print(f"{ORANGE}Dumping objdump...{CYAN}")
-        self.dump_objdump(self.final_object_file, "-tSr", "-C")
-        self.find_undefined_symbols(self.final_object_file)
-        self.analyze_readelf(self.dump_readelf(self.final_object_file, "-a", "--wide", "--debug-dump"))
+            top_symbols_str.append(f'{GREEN}{symbol}{CYAN} in "{ORANGE}{symbol.source}{CYAN}" {PURPLE}{symbol.size}{GREEN} bytes')
+        Logger.info("\n".join(top_symbols_str))
 
     def generate_linkerscript(self):
         written_symbols = set[Symbol]()  # Keep track of duplicates
-        linkerscript_file = self.profile.TemporaryFilesFolder.create_filepath(self.project_name + ".ld")
+        linkerscript_file = self.temp_folder.make_filepath(self.project_name + ".ld")
         with open(linkerscript_file, "w") as f:
 
             def write_section(section: str):
-                symbols = [symbol for symbol in self.symbols.values() if symbol.section == section]
+                symbols = [symbol for symbol in self.symbol_manager.symbols.values() if symbol.section == section]
                 if not symbols:
                     return
                 f.write(f"\t{section} ALIGN(0x20):\n\t{{\n")
@@ -585,203 +349,106 @@ class FreighterGameCubeProject(FreighterProject):
 
         self.profile.LinkerScripts.append(linkerscript_file)
 
-    def process_project(self):
-        with open(self.final_object_file, "rb") as f:
-            elf = ELFFile(f)
-            with open(self.bin_path, "wb") as data:
-                for symbol in elf.iter_sections():
-                    if symbol.header["sh_addr"] < self.profile.InjectionAddress:
-                        continue
-                    # Filter out sections without SHF_ALLOC attribute
-                    if symbol.header["sh_flags"] & 0x2:
-                        data.seek(symbol.header["sh_addr"] - self.profile.InjectionAddress)
-                        data.write(symbol.data())
-
-    def analyze_readelf(self, path: FilePath):
-        section_map = {}
-        Console.print(f'{ANALYZING} "{path}"')
-        with open(path, "r") as f:
-            while "  [ 0]" not in f.readline():
-                pass
-            id = 1
-            while not (line := f.readline()).startswith("Key"):
-                section_map[id] = line[7:].strip().split(" ")[0]
-                id += 1
-            while "Num" not in f.readline():
-                pass
-            f.readline()
-            while (line := f.readline()) != "\n":
-                (num, address, size, type, bind, vis, ndx, *name) = line.split()
-                if size == "0":
+    def write_sections(self, object_file: ObjectFile, final_binary: BytesIO):
+        with ELFFile.load_from_path(object_file) as elf:
+            for symbol in elf.iter_sections():
+                if symbol.header["sh_addr"] < self.profile.InjectionAddress:
                     continue
-                if name[0] in self.symbols:
-                    symbol = self.symbols[name[0]]
-                    symbol.hex_address = "0x" + address
-                    symbol.size = int(size)
-                    symbol.library_file = self.project_name + ".o"
-                    if ndx == "ABS":
-                        continue
-                    symbol.section = section_map[int(ndx)]
+                # Filter out sections without SHF_ALLOC attribute
+                if symbol.header["sh_flags"] & 0x2:
+                    final_binary.seek(symbol.header["sh_addr"] - self.profile.InjectionAddress)
+                    final_binary.write(symbol.data())
 
-    def apply_hooks(self):
-        for hook in self.hooks:
-            hook.resolve(self.symbols)
-            hook.apply_dol(self.dol)
-            Console.print(hook)
-        bad_symbols = list[str]()
-        for hook in self.hooks:
-            if not hook.good and hook.symbol_name not in bad_symbols:
-                bad_symbols.append(hook.symbol_name)
-        if bad_symbols:
-            badlist = "\n"
-            for name in bad_symbols:
-                badlist += f'{ORANGE}{name}{AnsiAttribute.RESET} found in {CYAN}"{self.symbols[name].source_file}"\n'
-            raise FreighterException(
-f"""{ERROR} Freighter could not resolve hook addresses for the given symbols:
-{badlist}{AnsiAttribute.RESET}
-Possible Reasons:{ORANGE}
-    • If this is a external C++ Symbol, it's symbol definition may be missing from the "symbols"{ORANGE} folder
-    • Freighter did not parse the function signature below the #pragma hook into the demangled Itanium ABI format and the lookup to get the target branch address failed.
-    • The cache Freighter uses for incremental builds is faulty and needs to be reset. Use -cleanup option to reset this cache.
-    • The compiler optimized out the function by inlining or completely discarding it therefore the symbol does not exist.""")
-        if len(self.bin_data) > 0:
-            new_section: Section
-            if len(self.dol.textSections) <= DolFile.MaxTextSections:
-                new_section = TextSection(self.profile.InjectionAddress, self.bin_data)
-            elif len(self.dol.dataSections) <= DolFile.MaxDataSections:
-                new_section = DataSection(self.profile.InjectionAddress, self.bin_data)
-            else:
-                raise FreighterException("DOL is full! Cannot allocate any new sections.")
-            self.dol.append_section(new_section)
-
-        with open(self.profile.OutputDolFile, "wb") as f:
-            self.dol.save(f)
-
-    def apply_gecko(self):
-        for gecko_txt in self.profile.GeckoFolder.find_files(".txt", recursive=True):
-            if gecko_txt in self.profile.IgnoredGeckoFiles:
-                continue
-            for child in GeckoCodeTable.from_text(open(gecko_txt, "r").read()):
-                self.gecko_table.add_child(child)
-        while (len(self.bin_data) % 4) != 0:
-            self.bin_data += b"\x00"
-        Console.print(f"\n[{GREEN}Gecko Codes{AnsiAttribute.RESET}]")
-        for gecko_code in self.gecko_table:
-            status = f"{GREEN}ENABLED {CYAN}" if gecko_code.is_enabled() else f"{RED}DISABLED{CYAN}"
-            if gecko_code.is_enabled() == True:
-                for gecko_command in gecko_code:
-                    if gecko_command.codetype not in SupportedGeckoCodetypes:
-                        status = "OMITTED"
-            Console.print(f"{status:12s} ${gecko_code.name}")
-            if status == "OMITTED":
-                Console.print(f"{ORANGE}Includes unsupported codetypes:")
-                for gecko_command in gecko_code:
-                    if gecko_command.codetype not in SupportedGeckoCodetypes:
-                        Console.print(gecko_command)
-            vaddress = self.profile.InjectionAddress + len(self.bin_data)
-            gecko_data = bytearray()
-            gecko_meta = []
-
-            gecko_commands = [item for item in gecko_code if isinstance(item, AsmInsert) or isinstance(item, AsmInsertXOR)]
-
-            for gecko_command in gecko_commands:
-                if status == "UNUSED" or status == "OMITTED":
-                    gecko_meta.append((0, len(gecko_command.value), status, gecko_command))
-                else:
-                    self.dol.seek(gecko_command._address | 0x80000000)
-                    write_branch(self.dol, vaddress + len(gecko_data))
-                    gecko_meta.append(
-                        (
-                            vaddress + len(gecko_data),
-                            len(bytes(gecko_command.value)),
-                            status,
-                            gecko_command,
-                        )
-                    )
-                    gecko_data += bytes(gecko_command.value)[:-4]
-                    gecko_data += assemble_branch(
-                        vaddress + len(gecko_data),
-                        gecko_command._address + 4 | 0x80000000,
-                    )
-            self.bin_data += gecko_data
-            if gecko_meta:
-                self.gecko_meta.append((vaddress, len(gecko_data), status, gecko_code, gecko_meta))
-        Console.print("\n")
-        self.gecko_table.apply(self.dol)
-
-    def export_symbol_map(self):
+    def export_symbol_map(self, final_object_file: ObjectFile):
         if not self.user_environment.DolphinMaps:
-            Console.print("Dolphin Maps folder is not set in the UserEnvironment.toml. Skipping map export...")
+            Logger.warn("Dolphin Maps folder is not set in the UserEnvironment.toml. Skipping map export...")
             return
 
         if not self.profile.InputSymbolMap:
-            Console.print(f"{ORANGE}No input symbol map. Skipping map export...")
+            Logger.warn(f"{ORANGE}No input symbol map. Skipping map export...")
             return
 
         if not self.profile.OutputSymbolMapPaths:
-            Console.print(f"{ORANGE}No paths found for symbol map output. Skipping map export...")
+            Logger.warn(f"{ORANGE}No paths found for symbol map output. Skipping map export...")
             return
 
-        self.profile.OutputSymbolMapPaths.append(self.user_environment.DolphinMaps.create_filepath(self.profile.GameID + ".map"))
-        Console.print(f"{CYAN}Copying symbols to map...")
-        with open(self.final_object_file, "rb") as f:
-            elf = ELFFile(f)
+        self.profile.OutputSymbolMapPaths.append(self.user_environment.DolphinMaps.make_filepath(self.profile.GameID + ".map"))
 
-            index_to_name = {}
-            for index, section in enumerate(elf.iter_sections()):
-                index_to_name[index] = section.name
+        Logger.info(f"{CYAN}Copying new symbols to map file...")
 
-            section_symbols = defaultdict(list)
-            symtab = elf.get_section_by_name(".symtab")
-            if isinstance(symtab, SymbolTableSection):
-                # Filter through the symbol table so that we only append symbols that use physical memory
-                for symbol in symtab.iter_symbols():
-                    symbol_data = {}
-                    symbol_data["bind"], symbol_data["type"] = symbol.entry["st_info"].values()
-                    if symbol_data["type"] in ["STT_NOTYPE", "STT_FILE"]:
-                        continue
-                    if symbol.entry["st_value"] < self.profile.InjectionAddress:
-                        continue
-                    symbol_data["address"] = symbol.entry["st_value"]
-                    symbol_data["size"] = symbol.entry["st_size"]
-                    if symbol_data["size"] == 0:
-                        continue
-                    symbol_data["name"] = symbol.name
+        with open(final_object_file, "rb") as f:
+            elf = ELFFile(BytesIO(f.read()))
 
-                    symbol_data["section_index"] = symbol.entry["st_shndx"]
-                    if symbol_data["section_index"] in ["SHN_ABS", "SHN_UNDEF"]:
-                        continue
-                    symbol_data["section"] = index_to_name[symbol.entry["st_shndx"]]
-                    # if self.config.VerboseOutput:
-                    #     Console.print(
-                    #         f'{GREEN + symbol_data["name"]} {PURPLE}@ {hex(symbol_data["address"])} {Cyan}({index_to_name[symbol_data["section_index"]]}) {GREEN}Size: {str(symbol_data["size"])} bytes {Orange +symbol_data["bind"]}, {symbol_data["type"]}',
-                    #         end=" ",
-                    #     )
-                    #     Console.print(f"{GREEN}Added")
-                    section_symbols[symbol_data["section"]].append(symbol_data)
-            with open(self.profile.InputSymbolMap, "r+") as f:
-                contents = f.readlines()
-                insert_index = {}
-                section = ""
-                for line_index, line in enumerate(contents):
-                    if "section layout" in line:
-                        section = line.split(" ")[0]
-                    if line == "\n":
-                        insert_index[section] = line_index
-                insert_offset = 0
-                for section in insert_index:
-                    if section in section_symbols.keys():
-                        for symbol in section_symbols[section]:
-                            insert_str = f'  {symbol["address"] - self.profile.InjectionAddress:08X} {symbol["size"]:06X} {symbol["address"]:08X}  4 '
-                            if symbol["name"] in self.symbols:
-                                symbol = self.symbols[symbol["name"]]
-                                insert_str += f"{symbol.demangled_name}\t {symbol.source_file} {symbol.library_file}\n"
-                            contents.insert(insert_index[section] + insert_offset, insert_str)
-                            insert_offset += 1
-                for path in self.profile.OutputSymbolMapPaths:
-                    open(path, "w").writelines(contents)
+        index_to_name = {}
+        for index, section in enumerate(elf.iter_sections()):
+            index_to_name[index] = section.name
 
-    def patch_osarena_low(self, dol: DolFile, rom_end: int):
+        section_symbols = defaultdict(list)
+        section = elf.get_section_by_name(".symtab")
+        if isinstance(section, SymbolTableSection):
+            symbol_table = section
+        else:
+            raise FreighterException(f'.symtab not found in "{final_object_file}"')
+
+        # Filter through the symbol table so that we only append symbols that use physical memory
+        for symbol in symbol_table.iter_symbols():
+            symbol_data = {}
+            bind, type = symbol.entry["st_info"].values()
+            if type in ["STT_NOTYPE", "STT_FILE"]:
+                continue
+            symbol_data["bind"] = bind
+            symbol_data["type"] = type
+
+            address = symbol.entry["st_value"]
+            if address < self.profile.InjectionAddress:
+                continue
+            symbol_data["address"] = address
+
+            size = symbol.entry["st_size"]
+
+            if size == 0:
+                continue
+            symbol_data["size"] = size
+
+            symbol_data["name"] = symbol.name
+
+            section_index = symbol.entry["st_shndx"]
+
+            if section_index in ["SHN_ABS", "SHN_UNDEF"]:
+                continue
+            symbol_data["section_index"] = section_index
+            symbol_data["section"] = index_to_name[section_index]
+            section_symbols[symbol_data["section"]].append(symbol_data)
+
+        # Read original map file to insert new symbols into
+        with open(self.profile.InputSymbolMap, "r") as map_file:
+            contents = map_file.readlines()
+
+        insert_index = {}
+        section = ""
+        for line_index, line in enumerate(contents):
+            if "section layout" in line:
+                section = line.split(" ")[0]
+            if line == "\n":
+                insert_index[section] = line_index
+
+        insert_offset = 0
+        for section in insert_index:
+            if section in section_symbols.keys():
+                for symbol in section_symbols[section]:
+                    insert_str = f'  {symbol["address"] - self.profile.InjectionAddress:08X} {symbol["size"]:06X} {symbol["address"]:08X}  4 '
+                    symbol = self.symbol_manager.get_symbol(symbol["name"])
+                    insert_str += f"{symbol.demangled_name}\t {symbol.source} {self.project_name+".o"}\n"
+                    contents.insert(insert_index[section] + insert_offset, insert_str)
+                    insert_offset += 1
+
+        # Write map file to all output paths
+        for path in self.profile.OutputSymbolMapPaths:
+            with open(path, "w") as map_file:
+                map_file.writelines(contents)
+            Logger.info(f'Wrote map file to "{path}"')
+
+    def patch_osarena_low(self, rom_end: int, dol_file: DolFile):
         stack_size = 0x10000
         db_stack_size = 0x2000
 
@@ -796,45 +463,49 @@ Possible Reasons:{ORANGE}
         db_osarena_lo = (db_stack_addr + 31) & 0xFFFFFFE0
 
         # In [__init_registers]...
-        dol.seek(0x80005410)
-        write_lis(dol, 1, sign_extend(stack_addr >> 16, 16))
-        write_ori(dol, 1, 1, stack_addr & 0xFFFF)
+        dol_file.seek(0x80005410)
+        write_lis(dol_file, 1, sign_extend(stack_addr >> 16, 16))
+        write_ori(dol_file, 1, 1, stack_addr & 0xFFFF)
 
         # It can be assumed that the db_stack_addr value is also set somewhere.
         # However, it does not seem to matter, as the DBStack is not allocated.
 
         # In [OSInit]...
         # OSSetArenaLo( db_osarena_lo );
-        dol.seek(0x800EB36C)
-        write_lis(dol, 3, sign_extend(db_osarena_lo >> 16, 16))
-        write_ori(dol, 3, 3, db_osarena_lo & 0xFFFF)
+        dol_file.seek(0x800EB36C)
+        write_lis(dol_file, 3, sign_extend(db_osarena_lo >> 16, 16))
+        write_ori(dol_file, 3, 3, db_osarena_lo & 0xFFFF)
 
         # In [OSInit]...
         # If ( BootInfo->0x0030 == 0 ) && ( *BI2DebugFlag < 2 )
         # OSSetArenaLo( _osarena_lo );
-        dol.seek(0x800EB3A4)
-        write_lis(dol, 3, sign_extend(osarena_lo >> 16, 16))
-        write_ori(dol, 3, 3, osarena_lo & 0xFFFF)
+        dol_file.seek(0x800EB3A4)
+        write_lis(dol_file, 3, sign_extend(osarena_lo >> 16, 16))
+        write_ori(dol_file, 3, 3, osarena_lo & 0xFFFF)
 
         # In [__OSThreadInit]...
         # DefaultThread->0x304 = db_stack_end
-        dol.seek(0x800F18BC)
-        write_lis(dol, 3, sign_extend(db_stack_end >> 16, 16))
-        write_ori(dol, 0, 3, db_stack_end & 0xFFFF)
+        dol_file.seek(0x800F18BC)
+        write_lis(dol_file, 3, sign_extend(db_stack_end >> 16, 16))
+        write_ori(dol_file, 0, 3, db_stack_end & 0xFFFF)
 
         # In [__OSThreadInit]...
         # DefaultThread->0x308 = _stack_end
-        dol.seek(0x800F18C4)
-        write_lis(dol, 3, sign_extend(stack_end >> 16, 16))
-        dol.seek(0x800F18CC)
-        write_ori(dol, 0, 3, stack_end & 0xFFFF)
+        dol_file.seek(0x800F18C4)
+        write_lis(dol_file, 3, sign_extend(stack_end >> 16, 16))
+        dol_file.seek(0x800F18CC)
+        write_ori(dol_file, 0, 3, stack_end & 0xFFFF)
 
         size = rom_end - self.profile.InjectionAddress
-        Console.print(
-            f"{CYAN}✨What's new:\n{CYAN}Injected Binary Size: 0x{ORANGE}{size:x}{GREEN} Bytes or"
-            f" {ORANGE}~{size/1024:.2f}{GREEN} KiBs\n{CYAN}Injection Address @"
-            f" 0x{self.profile.InjectionAddress:x}\n{CYAN}New ROM End @ 0x{rom_end:x}\n{CYAN}Stack"
-            f" Moved To: 0x{stack_addr:x}\n{CYAN}Stack End @ 0x{stack_end:x}\n{CYAN}New OSArenaLo @"
-            f" 0x{osarena_lo:x}\n{CYAN}Debug Stack Moved To: 0x{db_stack_addr:x}\n{CYAN}Debug Stack"
-            f" End @ 0x{db_stack_end:x}\n{CYAN}New Debug OSArenaLo @ 0x{db_osarena_lo:x}"
-        )
+        log_str = f"""{CYAN}✨What's new:
+{CYAN}Injected Binary Size: 0x{ORANGE}{size:x}{GREEN} Bytes or {ORANGE}~{size/1024:.2f}{GREEN} KiBs
+{CYAN}Injection Address @0x{self.profile.InjectionAddress:x}
+{CYAN}New ROM End @ 0x{rom_end:x}
+{CYAN}Stack moved to: 0x{stack_addr:x}
+{CYAN}Stack End @ 0x{stack_end:x}
+{CYAN}New OSArenaLo @ 0x{osarena_lo:x}
+{CYAN}Debug Stack Moved To: 0x{db_stack_addr:x}
+{CYAN}Debug Stack End @ 0x{db_stack_end:x}
+{CYAN}New Debug OSArenaLo @ 0x{db_osarena_lo:x}
+"""
+        Logger.info(log_str)

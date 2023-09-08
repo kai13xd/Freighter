@@ -1,13 +1,23 @@
-import os
+from __future__ import annotations
 
-from freighter.config import *
-from freighter.console import *
+import os
+from freighter.arguments import Arguments
+from freighter.logging import *
 from freighter.project import *
+
+USERENVIRONMENT_PATH = FilePath(FREIGHTER_LOCALAPPDATA / "UserEnvironment.toml")
 
 
 def main():
     os.system("cls" if os.name == "nt" else "clear")
-    if not any((Arguments.build, Arguments.clean, Arguments.new, Arguments.importarg, Arguments.reset)):
+    enabled_logs = {LogLevel.Info, LogLevel.Warning, LogLevel.Error, LogLevel.Exception}
+    if Arguments.debug:
+        enabled_logs.add(LogLevel.Debug)
+    if Arguments.profiler:
+        enabled_logs.add(LogLevel.Performance)
+    Logger(enabled_logs)
+    # try:
+    if not any((Arguments.build, Arguments.clean, Arguments.new, Arguments.import_project, Arguments.reset)):
         Arguments.print_help()
 
     if Arguments.appdata:
@@ -15,15 +25,26 @@ def main():
 
     # UserEnvironment
     if Arguments.reset:
-        user_environment = UserEnvironment.reset()
-    else:
-        user_environment = UserEnvironment.load()
+        Logger.info("Resetting UserEnvironment...")
+        USERENVIRONMENT_PATH.ask_delete()
+        user_environment = UserEnvironmentConfig(USERENVIRONMENT_PATH)
+        user_environment.save()
+        exit(0)
+
+    if not (user_environment := UserEnvironmentConfig.load(USERENVIRONMENT_PATH)):
+        user_environment = UserEnvironmentConfig(USERENVIRONMENT_PATH)
+        user_environment.save()
 
     # ProjectManager
-    project_manager = ProjectManager.load()
+
+    if not (project_manager := ProjectListConfig.load(PROJECTLIST_PATH)):
+        project_manager = ProjectListConfig(PROJECTLIST_PATH)
+        project_manager.save()
+
     if Arguments.new:
         project_manager.new_project()
-    if Arguments.importarg:
+
+    if Arguments.import_project:
         project_manager.import_project()
 
     # ProjectConfig
@@ -32,20 +53,23 @@ def main():
         if project_manager.has_project(project_name):
             project = project_manager.Projects[project_name]
         else:
-            exit(0)
+            os._exit(0)
         os.chdir(project.ProjectPath)
         # ProjectConfig
-        project_config = ProjectConfig.load_dynamic(project.ConfigPath)
-        project_config.set_profile(Arguments.build.profile_name)
+        project_config = ProjectConfig.load_dynamic(project.ConfigPath, Arguments.build.profile_name)
 
         # FreighterProject
         if isinstance(project_config, GameCubeProjectConfig):
-            freighter_project = FreighterGameCubeProject(user_environment, project_config)
+            freighter_project = GameCubeProject(user_environment, project_config, Arguments.clean)
         elif isinstance(project_config, SwitchProjectConfig):
-            freighter_project = FreighterSwitchProject(user_environment, project_config)
+            freighter_project = SwitchProject(user_environment, project_config, Arguments.clean)
         else:
-            raise FreighterException("wtf")
+            raise FreighterException("wtf")  # satisfy type checker
 
-        if Arguments.clean:
-            freighter_project.cleanup()
         freighter_project.build()
+
+
+# except:
+# Logger.log(LogLevel.Exception, traceback.format_exc())
+# Logger._log.close()
+# os._exit(1)

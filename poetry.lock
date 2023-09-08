@@ -297,16 +297,16 @@ tests = ["check-manifest", "coverage", "defusedxml", "markdown2", "olefile", "pa
 
 [[package]]
 name = "pyelftools"
-version = "0.29"
+version = "0.30"
 description = "Library for analyzing ELF files and DWARF debugging information"
 optional = false
 python-versions = "*"
 files = [
-    {file = "pyelftools-0.29-py2.py3-none-any.whl", hash = "sha256:519f38cf412f073b2d7393aa4682b0190fa901f7c3fa0bff2b82d537690c7fc1"},
-    {file = "pyelftools-0.29.tar.gz", hash = "sha256:ec761596aafa16e282a31de188737e5485552469ac63b60cfcccf22263fd24ff"},
+    {file = "pyelftools-0.30-py2.py3-none-any.whl", hash = "sha256:544c3440eddb9a0dce70b6611de0b28163d71def759d2ed57a0d00118fc5da86"},
+    {file = "pyelftools-0.30.tar.gz", hash = "sha256:2fc92b0d534f8b081f58c7c370967379123d8e00984deb53c209364efd575b40"},
 ]
 
 [metadata]
 lock-version = "2.0"
-python-versions = ">=3.9,<=3.13"
-content-hash = "499eb80f9b930b48a6725cd32466517cc9573c39980596730cec6f5b0c301446"
+python-versions = ">=3.12,<4.0"
+content-hash = "2bef0e3b779c36d6f049680901c3d174f9372d76af80e5e2e508c6d37e700876"
